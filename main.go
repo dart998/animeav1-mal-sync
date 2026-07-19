@@ -9,6 +9,7 @@ import (
 	"html"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -40,6 +41,7 @@ type Settings struct {
 	IntervalMinutes int    `json:"interval_minutes"`
 	DryRun          bool   `json:"dry_run"`
 	OnlyIncrease    bool   `json:"only_increase"`
+	AutoSync        bool   `json:"auto_sync"`
 }
 
 type LastRun struct {
@@ -74,10 +76,15 @@ type App struct {
 }
 
 type AVItem struct {
-	Title  string
-	Seen   int
-	Total  int
-	Status string
+	MediaID  int               `json:"media_id"`
+	Title    string            `json:"title"`
+	Aliases  map[string]string `json:"aliases"`
+	Seen     int               `json:"seen"`
+	Total    int               `json:"total"`
+	Status   int               `json:"status"`
+	Score    int               `json:"score"`
+	Favorite bool              `json:"favorite"`
+	Slug     string            `json:"slug"`
 }
 
 type MALSearch struct {
@@ -140,6 +147,7 @@ func main() {
 	mux.HandleFunc("/cookie", app.saveCookie)
 	mux.HandleFunc("/settings", app.saveSettings)
 	mux.HandleFunc("/check", app.check)
+	mux.HandleFunc("/test", app.check)
 	mux.HandleFunc("/sync", app.syncHandler)
 	mux.HandleFunc("/oauth/start", app.oauthStart)
 	mux.HandleFunc("/oauth/callback", app.oauthCallback)
@@ -156,7 +164,12 @@ func (a *App) load() {
 	a.state.Settings.IntervalMinutes = getenvInt("SYNC_INTERVAL_MINUTES", 15)
 	a.state.Settings.DryRun = getenvBool("DRY_RUN", true)
 	a.state.Settings.OnlyIncrease = getenvBool("ONLY_INCREASE", true)
-	b, err := os.ReadFile(filepath.Join(a.dataDir, "state.json"))
+	a.state.Settings.AutoSync = getenvBool("AUTO_SYNC", false)
+	b, err := os.ReadFile(a.configPath())
+	if err != nil {
+		// Migración transparente desde versiones anteriores.
+		b, err = os.ReadFile(filepath.Join(a.dataDir, "state.json"))
+	}
 	if err == nil {
 		_ = json.Unmarshal(b, &a.state)
 	}
@@ -164,9 +177,13 @@ func (a *App) load() {
 		a.state.Settings.IntervalMinutes = 15
 	}
 }
+func (a *App) configPath() string {
+	return filepath.Join(a.dataDir, "config", "config.json")
+}
 func (a *App) save() {
 	b, _ := json.MarshalIndent(a.state, "", "  ")
-	_ = os.WriteFile(filepath.Join(a.dataDir, "state.json"), b, 0600)
+	_ = os.MkdirAll(filepath.Dir(a.configPath()), 0700)
+	_ = os.WriteFile(a.configPath(), b, 0600)
 }
 func (a *App) appendHistory(v any) {
 	b, _ := json.Marshal(v)
@@ -183,11 +200,12 @@ func (a *App) scheduler() {
 		mins := a.state.Settings.IntervalMinutes
 		last := a.state.Last.Finished
 		running := a.running
+		auto := a.state.Settings.AutoSync
 		a.mu.Unlock()
 		if mins < 1 {
 			mins = 15
 		}
-		if !running && (last == 0 || time.Now().Unix()-last >= int64(mins*60)) {
+		if auto && !running && (last == 0 || time.Now().Unix()-last >= int64(mins*60)) {
 			go a.runSync("scheduled")
 		}
 		time.Sleep(30 * time.Second)
@@ -227,12 +245,12 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	page := fmt.Sprintf(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>AnimeAV1 → MAL</title><style>
 body{font-family:Arial,sans-serif;background:#111827;color:#e5e7eb;max-width:900px;margin:30px auto;padding:0 16px}h1{margin-bottom:8px}.card{background:#1f2937;border-radius:12px;padding:20px;margin:16px 0}input,textarea{width:100%%;box-sizing:border-box;background:#111827;color:#fff;border:1px solid #4b5563;border-radius:8px;padding:10px;margin:6px 0 12px}button,.btn{display:inline-block;background:#14b8a6;color:#041311;border:0;border-radius:8px;padding:10px 15px;font-weight:bold;text-decoration:none;cursor:pointer}.secondary{background:#374151;color:#fff}.danger{background:#ef4444;color:#fff}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}.stat{background:#111827;padding:12px;border-radius:8px}.muted{color:#9ca3af}.msg{white-space:pre-wrap;word-break:break-word}</style></head><body>
-<h1>AnimeAV1 → MyAnimeList</h1><div class="muted">Versión EX4100 ARMv7, sin navegador ni Python</div>
-<div class="card"><h2>AnimeAV1</h2><p>%s</p><form method="post" action="/cookie"><label>Cookie completa del navegador</label><textarea name="cookie" rows="3" placeholder="session=...; otra_cookie=...">%s</textarea><button>Guardar cookie</button> <a class="btn secondary" href="/check">Verificar</a></form><p class="muted">Pega el contenido completo de la cabecera Cookie. Se guarda únicamente en /data/state.json.</p></div>
+<h1>AnimeAV1 → MyAnimeList</h1><div class="muted">v0.3 · EX4100 ARMv7 · lectura SvelteKit por HTTP</div>
+<div class="card"><h2>AnimeAV1</h2><p>%s</p><form method="post" action="/cookie"><label>Cookie completa del navegador</label><textarea name="cookie" rows="3" placeholder="session=...; otra_cookie=...">%s</textarea><button>Guardar cookie</button> <a class="btn secondary" href="/check">Verificar</a></form><p class="muted">Pega el contenido completo de la cabecera Cookie. Se guarda únicamente en /data/config/config.json.</p></div>
 <div class="card"><h2>MyAnimeList</h2><p>%s</p><a class="btn" href="/oauth/start">Conectar con MAL</a> <a class="btn danger" href="/oauth/disconnect">Desconectar</a></div>
-<div class="card"><h2>Sincronización</h2><form method="post" action="/settings"><label>Intervalo en minutos</label><input type="number" min="1" name="interval" value="%d"><label><input style="width:auto" type="checkbox" name="dry" %s> Modo simulación (no escribe en MAL)</label><br><label><input style="width:auto" type="checkbox" name="increase" %s> Solo aumentar episodios</label><br><br><button>Guardar ajustes</button> <button formaction="/sync">Sincronizar ahora</button></form></div>
+<div class="card"><h2>Sincronización</h2><form method="post" action="/settings"><label>Intervalo en minutos</label><input type="number" min="1" name="interval" value="%d"><label><input style="width:auto" type="checkbox" name="dry" %s> Modo simulación (no escribe en MAL)</label><br><label><input style="width:auto" type="checkbox" name="increase" %s> Solo aumentar episodios</label><br><label><input style="width:auto" type="checkbox" name="auto" %s> Sincronización automática</label><br><br><button>Guardar ajustes</button> <button formaction="/sync">Sincronizar ahora</button></form></div>
 <div class="card"><h2>Estado</h2><div class="grid"><div class="stat"><b>Ejecutándose</b><br>%s</div><div class="stat"><b>Último estado</b><br>%s</div><div class="stat"><b>Encontrados</b><br>%d</div><div class="stat"><b>Actualizados</b><br>%d</div><div class="stat"><b>Errores</b><br>%d</div></div><p class="msg">%s</p><p><a class="btn secondary" href="/health">JSON</a> <a class="btn secondary" href="/history">Historial</a></p></div>
-</body></html>`, cookieStatus, html.EscapeString(s.Settings.Cookie), malStatus, s.Settings.IntervalMinutes, checked(s.Settings.DryRun), checked(s.Settings.OnlyIncrease), runText, html.EscapeString(last), s.Last.Found, s.Last.Updated, s.Last.Errors, html.EscapeString(s.Last.Message))
+</body></html>`, cookieStatus, html.EscapeString(s.Settings.Cookie), malStatus, s.Settings.IntervalMinutes, checked(s.Settings.DryRun), checked(s.Settings.OnlyIncrease), checked(s.Settings.AutoSync), runText, html.EscapeString(last), s.Last.Found, s.Last.Updated, s.Last.Errors, html.EscapeString(s.Last.Message))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	io.WriteString(w, page)
 }
@@ -275,6 +293,7 @@ func (a *App) saveSettings(w http.ResponseWriter, r *http.Request) {
 	a.state.Settings.IntervalMinutes = n
 	a.state.Settings.DryRun = r.FormValue("dry") != ""
 	a.state.Settings.OnlyIncrease = r.FormValue("increase") != ""
+	a.state.Settings.AutoSync = r.FormValue("auto") != ""
 	a.save()
 	a.mu.Unlock()
 	redirectHome(w, r)
@@ -298,38 +317,13 @@ func (a *App) check(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) verifyAnime(cookie string) (string, error) {
-	if cookie == "" {
-		return "", errors.New("falta la cookie")
-	}
-	urls := listURLs()
-	req, _ := http.NewRequest("GET", urls[0].URL, nil)
-	browserHeaders(req, cookie)
-	resp, err := a.client.Do(req)
+	items, err := a.scrape(cookie)
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
-	b, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-	body := strings.ToLower(string(b))
-	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("AnimeAV1 respondió HTTP %d", resp.StatusCode)
-	}
-	if strings.Contains(body, "verifique que es un ser humano") || strings.Contains(body, "type=\"password\"") || strings.Contains(body, "iniciar sesión") {
-		return "", errors.New("cookie caducada o sesión no válida")
-	}
-	return "Sesión válida", nil
+	return fmt.Sprintf("Sesión válida · %d entradas leídas", len(items)), nil
 }
 
-type listDef struct{ Status, URL string }
-
-func listURLs() []listDef {
-	return []listDef{
-		{"watching", getenv("ANIMEAV1_WATCHING_URL", "https://animeav1.com/cuenta/listas/viendo")},
-		{"plan_to_watch", getenv("ANIMEAV1_PLAN_TO_WATCH_URL", "https://animeav1.com/cuenta/listas/por-ver")},
-		{"completed", getenv("ANIMEAV1_COMPLETED_URL", "https://animeav1.com/cuenta/listas/completada")},
-		{"dropped", getenv("ANIMEAV1_DROPPED_URL", "https://animeav1.com/cuenta/listas/dropped")},
-	}
-}
 func browserHeaders(req *http.Request, cookie string) {
 	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux armv7l) AppleWebKit/537.36 Chrome/124 Safari/537.36")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml")
@@ -337,46 +331,14 @@ func browserHeaders(req *http.Request, cookie string) {
 	req.Header.Set("Cookie", cookie)
 }
 
-var reProgress = regexp.MustCompile(`(?is)(.{0,1800}?)(\d+)\s*/\s*(\d+)(.{0,700}?)`)
-var reHeading = regexp.MustCompile(`(?is)<h[1-6][^>]*>(.*?)</h[1-6]>`)
-var reMediaLink = regexp.MustCompile(`(?is)<a[^>]+href=["'][^"']*/(?:media|anime|serie|ver)/[^"']+["'][^>]*>(.*?)</a>`)
-var reTags = regexp.MustCompile(`<[^>]+>`)
-var reSpaces = regexp.MustCompile(`\s+`)
+var (
+	reSpaces      = regexp.MustCompile(`\s+`)
+	reIntField    = func(name string) *regexp.Regexp { return regexp.MustCompile(name + `\s*:\s*(-?\d+|null)`) }
+	reBoolField   = func(name string) *regexp.Regexp { return regexp.MustCompile(name + `\s*:\s*(true|false)`) }
+	reStringField = func(name string) *regexp.Regexp { return regexp.MustCompile(name + `\s*:\s*("(?:\\.|[^"\\])*")`) }
+	reAlias       = regexp.MustCompile(`("(?:\\.|[^"\\])*")\s*:\s*("(?:\\.|[^"\\])*")`)
+)
 
-func cleanText(v string) string {
-	v = reTags.ReplaceAllString(v, " ")
-	v = html.UnescapeString(v)
-	return strings.TrimSpace(reSpaces.ReplaceAllString(v, " "))
-}
-func parseItems(body, status string) []AVItem {
-	out := []AVItem{}
-	seen := map[string]bool{}
-	for _, m := range reProgress.FindAllStringSubmatch(body, -1) {
-		n, _ := strconv.Atoi(m[2])
-		total, _ := strconv.Atoi(m[3])
-		block := m[1] + m[4]
-		title := ""
-		hs := reHeading.FindAllStringSubmatch(block, -1)
-		if len(hs) > 0 {
-			title = cleanText(hs[len(hs)-1][1])
-		}
-		if title == "" {
-			ls := reMediaLink.FindAllStringSubmatch(block, -1)
-			if len(ls) > 0 {
-				title = cleanText(ls[len(ls)-1][1])
-			}
-		}
-		if title == "" || len(title) > 180 {
-			continue
-		}
-		key := normalize(title) + fmt.Sprint(n)
-		if !seen[key] {
-			seen[key] = true
-			out = append(out, AVItem{title, n, total, status})
-		}
-	}
-	return out
-}
 func normalize(s string) string {
 	s = strings.ToLower(html.UnescapeString(s))
 	var b strings.Builder
@@ -389,31 +351,183 @@ func normalize(s string) string {
 	}
 	return strings.TrimSpace(reSpaces.ReplaceAllString(b.String(), " "))
 }
-
+func jsString(v string) string {
+	if v == "" {
+		return ""
+	}
+	x, err := strconv.Unquote(v)
+	if err != nil {
+		return strings.Trim(v, `"`)
+	}
+	return x
+}
+func fieldInt(block, name string) int {
+	m := reIntField(name).FindStringSubmatch(block)
+	if len(m) < 2 || m[1] == "null" {
+		return 0
+	}
+	n, _ := strconv.Atoi(m[1])
+	return n
+}
+func fieldBool(block, name string) bool {
+	m := reBoolField(name).FindStringSubmatch(block)
+	return len(m) > 1 && m[1] == "true"
+}
+func fieldString(block, name string) string {
+	m := reStringField(name).FindStringSubmatch(block)
+	if len(m) < 2 {
+		return ""
+	}
+	return jsString(m[1])
+}
+func balancedValue(src string, start int, open, close byte) (string, error) {
+	if start < 0 || start >= len(src) || src[start] != open {
+		return "", errors.New("inicio de bloque inválido")
+	}
+	depth := 0
+	inString := false
+	escaped := false
+	for i := start; i < len(src); i++ {
+		c := src[i]
+		if inString {
+			if escaped {
+				escaped = false
+			} else if c == '\\' {
+				escaped = true
+			} else if c == '"' {
+				inString = false
+			}
+			continue
+		}
+		if c == '"' {
+			inString = true
+			continue
+		}
+		if c == open {
+			depth++
+		}
+		if c == close {
+			depth--
+			if depth == 0 {
+				return src[start : i+1], nil
+			}
+		}
+	}
+	return "", errors.New("bloque SvelteKit incompleto")
+}
+func splitTopObjects(array string) []string {
+	out := []string{}
+	depth := 0
+	start := -1
+	inString := false
+	escaped := false
+	for i := 0; i < len(array); i++ {
+		c := array[i]
+		if inString {
+			if escaped {
+				escaped = false
+			} else if c == '\\' {
+				escaped = true
+			} else if c == '"' {
+				inString = false
+			}
+			continue
+		}
+		if c == '"' {
+			inString = true
+			continue
+		}
+		if c == '{' {
+			if depth == 0 {
+				start = i
+			}
+			depth++
+		}
+		if c == '}' {
+			depth--
+			if depth == 0 && start >= 0 {
+				out = append(out, array[start:i+1])
+				start = -1
+			}
+		}
+	}
+	return out
+}
+func extractObject(block, key string) string {
+	i := strings.Index(block, key+":")
+	if i < 0 {
+		return ""
+	}
+	j := strings.Index(block[i:], "{")
+	if j < 0 {
+		return ""
+	}
+	v, _ := balancedValue(block, i+j, '{', '}')
+	return v
+}
+func parseLibraryEntries(body string) ([]AVItem, error) {
+	i := strings.Index(body, "libraryEntries:")
+	if i < 0 {
+		return nil, errors.New("AnimeAV1 no contiene libraryEntries; cookie caducada o formato cambiado")
+	}
+	j := strings.Index(body[i:], "[")
+	if j < 0 {
+		return nil, errors.New("libraryEntries sin array")
+	}
+	arr, err := balancedValue(body, i+j, '[', ']')
+	if err != nil {
+		return nil, err
+	}
+	objects := splitTopObjects(arr)
+	items := make([]AVItem, 0, len(objects))
+	for _, obj := range objects {
+		media := extractObject(obj, "media")
+		if media == "" {
+			continue
+		}
+		it := AVItem{MediaID: fieldInt(obj, "mediaId"), Status: fieldInt(obj, "status"), Seen: fieldInt(obj, "episode"), Score: fieldInt(obj, "score"), Favorite: fieldBool(obj, "favorite"), Title: fieldString(media, "title"), Total: fieldInt(media, "episodesCount"), Slug: fieldString(media, "slug"), Aliases: map[string]string{}}
+		aka := extractObject(media, "aka")
+		for _, m := range reAlias.FindAllStringSubmatch(aka, -1) {
+			if len(m) == 3 {
+				it.Aliases[jsString(m[1])] = jsString(m[2])
+			}
+		}
+		if it.Title != "" {
+			items = append(items, it)
+		}
+	}
+	if len(items) == 0 {
+		return nil, errors.New("libraryEntries encontrado pero no se pudo leer ninguna entrada")
+	}
+	return items, nil
+}
 func (a *App) scrape(cookie string) ([]AVItem, error) {
-	all := []AVItem{}
-	for _, d := range listURLs() {
-		req, _ := http.NewRequest("GET", d.URL, nil)
-		browserHeaders(req, cookie)
-		resp, err := a.client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
-		resp.Body.Close()
-		low := strings.ToLower(string(b))
-		if strings.Contains(low, "iniciar sesión") || strings.Contains(low, "verifique que es un ser humano") {
-			return nil, errors.New("la cookie de AnimeAV1 ha caducado")
-		}
-		if resp.StatusCode >= 400 {
-			return nil, fmt.Errorf("%s devolvió HTTP %d", d.URL, resp.StatusCode)
-		}
-		all = append(all, parseItems(string(b), d.Status)...)
+	if strings.TrimSpace(cookie) == "" {
+		return nil, errors.New("falta la cookie de AnimeAV1")
 	}
-	if len(all) == 0 {
-		return nil, errors.New("no se encontraron entradas; comprueba las URL de listas o la cookie")
+	u := getenv("ANIMEAV1_LIBRARY_URL", "https://animeav1.com/cuenta/listas")
+	req, err := http.NewRequest("GET", u, nil)
+	if err != nil {
+		return nil, err
 	}
-	return all, nil
+	browserHeaders(req, cookie)
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("AnimeAV1 respondió HTTP %d", resp.StatusCode)
+	}
+	low := strings.ToLower(string(b))
+	if strings.Contains(low, "verifique que es un ser humano") || strings.Contains(low, "iniciar sesión") && !strings.Contains(string(b), "libraryEntries:") {
+		return nil, errors.New("cookie caducada o sesión no válida")
+	}
+	return parseLibraryEntries(string(b))
 }
 
 func randomURLSafe(n int) string {
@@ -612,36 +726,77 @@ func similarity(a, b string) int {
 	}
 	return 100 - (dist * 100 / max)
 }
-func (a *App) resolve(title string) (MALAnime, error) {
-	q := url.QueryEscape(title)
-	var s MALSearch
-	if err := a.malRequest("GET", "/anime?q="+q+"&limit=10", nil, &s); err != nil {
-		return MALAnime{}, err
+func candidateTitles(it AVItem) []string {
+	out := []string{it.Title}
+	seen := map[string]bool{normalize(it.Title): true}
+	for _, v := range it.Aliases {
+		n := normalize(v)
+		if n != "" && !seen[n] {
+			seen[n] = true
+			out = append(out, v)
+		}
 	}
-	best := 0
-	bid := 0
-	for _, x := range s.Data {
-		sc := similarity(title, x.Node.Title)
-		if sc > best {
-			best = sc
-			bid = x.Node.ID
+	return out
+}
+func (a *App) resolve(it AVItem) (MALAnime, int, error) {
+	ids := map[int]string{}
+	for _, title := range candidateTitles(it) {
+		var sr MALSearch
+		if err := a.malRequest("GET", "/anime?q="+url.QueryEscape(title)+"&limit=10", nil, &sr); err != nil {
+			return MALAnime{}, 0, err
+		}
+		for _, x := range sr.Data {
+			if _, ok := ids[x.Node.ID]; !ok {
+				ids[x.Node.ID] = x.Node.Title
+			}
+		}
+	}
+	bestScore := -1
+	var best MALAnime
+	for id := range ids {
+		var anime MALAnime
+		if err := a.malRequest("GET", fmt.Sprintf("/anime/%d?fields=id,title,num_episodes,my_list_status", id), nil, &anime); err != nil {
+			continue
+		}
+		titleScore := 0
+		for _, t := range candidateTitles(it) {
+			if sc := similarity(t, anime.Title); sc > titleScore {
+				titleScore = sc
+			}
+		}
+		score := titleScore
+		if it.Total > 0 && anime.NumEpisodes > 0 {
+			d := int(math.Abs(float64(it.Total - anime.NumEpisodes)))
+			if d == 0 {
+				score += 12
+			} else if d <= 2 {
+				score += 5
+			} else if d > 5 {
+				score -= 15
+			}
+		}
+		if score > bestScore {
+			bestScore = score
+			best = anime
 		}
 	}
 	threshold := getenvInt("TITLE_MATCH_THRESHOLD", 80)
-	if bid == 0 || best < threshold {
-		return MALAnime{}, fmt.Errorf("sin coincidencia suficiente (%d%%)", best)
+	if best.ID == 0 || bestScore < threshold {
+		return MALAnime{}, bestScore, fmt.Errorf("sin coincidencia suficiente (%d puntos)", bestScore)
 	}
-	var anime MALAnime
-	err := a.malRequest("GET", fmt.Sprintf("/anime/%d?fields=id,title,num_episodes,my_list_status", bid), nil, &anime)
-	return anime, err
+	return best, bestScore, nil
 }
-func malStatus(s string) string {
+func malStatus(s int) string {
 	switch s {
-	case "watching":
+	case 0:
 		return "watching"
-	case "completed":
+	case 1:
+		return "plan_to_watch"
+	case 2:
 		return "completed"
-	case "dropped":
+	case 3:
+		return "on_hold"
+	case 4:
 		return "dropped"
 	default:
 		return "plan_to_watch"
@@ -669,6 +824,7 @@ func (a *App) saveSettingsNoRedirect(r *http.Request) {
 	a.state.Settings.IntervalMinutes = n
 	a.state.Settings.DryRun = r.FormValue("dry") != ""
 	a.state.Settings.OnlyIncrease = r.FormValue("increase") != ""
+	a.state.Settings.AutoSync = r.FormValue("auto") != ""
 	a.save()
 	a.mu.Unlock()
 }
@@ -696,7 +852,7 @@ func (a *App) runSync(trigger string) {
 	}
 	last.Found = len(items)
 	for _, it := range items {
-		anime, err := a.resolve(it.Title)
+		anime, matchScore, err := a.resolve(it)
 		if err != nil {
 			last.Errors++
 			last.Unmatched = append(last.Unmatched, it.Title+": "+err.Error())
@@ -728,7 +884,7 @@ func (a *App) runSync(trigger string) {
 			}
 		}
 		last.Updated++
-		a.appendHistory(map[string]any{"ts": time.Now().Unix(), "title": it.Title, "mal_title": anime.Title, "from": current, "to": desired, "status": status, "dry_run": dry})
+		a.appendHistory(map[string]any{"ts": time.Now().Unix(), "title": it.Title, "animeav1_media_id": it.MediaID, "mal_id": anime.ID, "mal_title": anime.Title, "match_score": matchScore, "from": current, "to": desired, "status": status, "dry_run": dry})
 	}
 	if last.Errors > 0 {
 		last.Status = "partial"
@@ -750,7 +906,7 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	ok := a.state.Last.Status != "error" && a.state.Last.Status != "partial"
-	out := map[string]any{"ok": ok, "running": a.running, "last_status": a.state.Last.Status, "last_finished": a.state.Last.Finished, "animeav1_session": a.state.AnimeOK, "mal_authorized": a.state.Token.AccessToken != "", "mal_user": a.state.MALUsername, "dry_run": a.state.Settings.DryRun, "last": a.state.Last}
+	out := map[string]any{"ok": ok, "running": a.running, "last_status": a.state.Last.Status, "last_finished": a.state.Last.Finished, "animeav1_session": a.state.AnimeOK, "mal_authorized": a.state.Token.AccessToken != "", "mal_user": a.state.MALUsername, "dry_run": a.state.Settings.DryRun, "auto_sync": a.state.Settings.AutoSync, "last": a.state.Last}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
 }

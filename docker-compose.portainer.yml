@@ -1,6 +1,6 @@
 services:
   animeav1-mal-sync:
-    image: TU_USUARIO_DOCKERHUB/animeav1-mal-sync:armv7
+    image: ovelayos/animeav1-mal-sync:latest
     container_name: animeav1-mal-sync
     restart: unless-stopped
     ports:
@@ -8,9 +8,12 @@ services:
     environment:
       MAL_CLIENT_ID: "TU_MAL_CLIENT_ID"
       MAL_CLIENT_SECRET: "TU_MAL_CLIENT_SECRET"
+      MAL_REDIRECT_URI: "http://IP_DEL_EX4100:8787/oauth/callback"
       SYNC_INTERVAL_MINUTES: "15"
       DRY_RUN: "true"
       ONLY_INCREASE: "true"
+      AUTO_SYNC: "false"
+      TITLE_MATCH_THRESHOLD: "80"
       DATA_DIR: "/data"
       LISTEN_ADDR: ":8787"
     volumes:
