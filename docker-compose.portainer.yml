@@ -1,0 +1,22 @@
+services:
+  animeav1-mal-sync:
+    image: TU_USUARIO_DOCKERHUB/animeav1-mal-sync:armv7
+    container_name: animeav1-mal-sync
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    environment:
+      MAL_CLIENT_ID: "TU_MAL_CLIENT_ID"
+      MAL_CLIENT_SECRET: "TU_MAL_CLIENT_SECRET"
+      SYNC_INTERVAL_MINUTES: "15"
+      DRY_RUN: "true"
+      ONLY_INCREASE: "true"
+      DATA_DIR: "/data"
+      LISTEN_ADDR: ":8787"
+    volumes:
+      - animeav1-mal-data:/data
+    security_opt:
+      - seccomp=unconfined
+
+volumes:
+  animeav1-mal-data:
