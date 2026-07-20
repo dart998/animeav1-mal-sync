@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -23,7 +24,7 @@ import (
 )
 
 const (
-	appVersion = "1.1.0"
+	appVersion = "1.2.0"
 	authURL    = "https://myanimelist.net/v1/oauth2/authorize"
 	tokenURL   = "https://myanimelist.net/v1/oauth2/token"
 	apiBase    = "https://api.myanimelist.net/v2"
@@ -70,14 +71,32 @@ type State struct {
 
 type App struct {
 	mu                sync.Mutex
+	cacheMu           sync.Mutex
 	state             State
 	running           bool
 	progressProcessed int
 	progressTotal     int
 	progressMessage   string
 	progressTrigger   string
+	cancelSync        context.CancelFunc
+	cache             map[string]CacheEntry
 	dataDir           string
 	client            *http.Client
+}
+
+type CacheEntry struct {
+	MediaID       int    `json:"media_id"`
+	MALID         int    `json:"mal_id"`
+	MALTitle      string `json:"mal_title"`
+	MatchScore    int    `json:"match_score"`
+	SourceTitle   string `json:"source_title"`
+	SourceSeen    int    `json:"source_seen"`
+	SourceStatus  int    `json:"source_status"`
+	SourceTotal   int    `json:"source_total"`
+	MALSeen       int    `json:"mal_seen"`
+	MALStatus     string `json:"mal_status"`
+	LastValidated int64  `json:"last_validated"`
+	UpdatedAt     int64  `json:"updated_at"`
 }
 
 type AVItem struct {
@@ -144,6 +163,7 @@ func main() {
 		log.Fatal(err)
 	}
 	app.load()
+	app.loadCache()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", app.dashboard)
@@ -156,6 +176,8 @@ func main() {
 	mux.HandleFunc("/check", app.check)
 	mux.HandleFunc("/test", app.check)
 	mux.HandleFunc("/sync", app.syncHandler)
+	mux.HandleFunc("/sync/stop", app.stopSyncHandler)
+	mux.HandleFunc("/cache/clear", app.clearCacheHandler)
 	mux.HandleFunc("/oauth/start", app.oauthStart)
 	mux.HandleFunc("/oauth/callback", app.oauthCallback)
 	mux.HandleFunc("/oauth/disconnect", app.oauthDisconnect)
@@ -216,6 +238,65 @@ func (a *App) appendHistory(v any) {
 		defer f.Close()
 		f.Write(append(b, '\n'))
 	}
+}
+
+func (a *App) cachePath() string {
+	return filepath.Join(a.dataDir, "cache.json")
+}
+
+func (a *App) loadCache() {
+	a.cacheMu.Lock()
+	defer a.cacheMu.Unlock()
+	a.cache = map[string]CacheEntry{}
+	b, err := os.ReadFile(a.cachePath())
+	if err == nil {
+		_ = json.Unmarshal(b, &a.cache)
+	}
+	if a.cache == nil {
+		a.cache = map[string]CacheEntry{}
+	}
+}
+
+func (a *App) saveCacheLocked() error {
+	b, err := json.MarshalIndent(a.cache, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := a.cachePath() + ".tmp"
+	if err = os.WriteFile(tmp, b, 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, a.cachePath())
+}
+
+func (a *App) cacheGet(mediaID int) (CacheEntry, bool) {
+	a.cacheMu.Lock()
+	defer a.cacheMu.Unlock()
+	v, ok := a.cache[strconv.Itoa(mediaID)]
+	return v, ok
+}
+
+func (a *App) cachePut(v CacheEntry) {
+	a.cacheMu.Lock()
+	defer a.cacheMu.Unlock()
+	if a.cache == nil {
+		a.cache = map[string]CacheEntry{}
+	}
+	a.cache[strconv.Itoa(v.MediaID)] = v
+	_ = a.saveCacheLocked()
+}
+
+func (a *App) cacheDelete(mediaID int) {
+	a.cacheMu.Lock()
+	defer a.cacheMu.Unlock()
+	delete(a.cache, strconv.Itoa(mediaID))
+	_ = a.saveCacheLocked()
+}
+
+func (a *App) cacheCount() int {
+	a.cacheMu.Lock()
+	defer a.cacheMu.Unlock()
+	return len(a.cache)
 }
 
 func (a *App) scheduler() {
@@ -282,22 +363,23 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 		percent = 100
 	}
 	terminal := html.EscapeString(a.recentHistoryText(40))
+	cacheCount := a.cacheCount()
 	page := fmt.Sprintf(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>AnimeAV1 → MAL</title><link rel="icon" type="image/svg+xml" href="/favicon.svg"><style>
 body{font-family:Arial,sans-serif;background:#111827;color:#e5e7eb;max-width:900px;margin:30px auto;padding:0 16px}h1{margin-bottom:8px}.card{background:#1f2937;border-radius:12px;padding:20px;margin:16px 0}input,textarea{width:100%%;box-sizing:border-box;background:#111827;color:#fff;border:1px solid #4b5563;border-radius:8px;padding:10px;margin:6px 0 12px}button,.btn{display:inline-block;background:#14b8a6;color:#041311;border:0;border-radius:8px;padding:10px 15px;font-weight:bold;text-decoration:none;cursor:pointer}.secondary{background:#374151;color:#fff}.danger{background:#ef4444;color:#fff}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}.stat{background:#111827;padding:12px;border-radius:8px}.muted{color:#9ca3af}.msg{white-space:pre-wrap;word-break:break-word}.progress-wrap{display:none;margin-top:16px}.progress-track{height:22px;background:#111827;border:1px solid #4b5563;border-radius:999px;overflow:hidden}.progress-bar{height:100%%;width:0;background:#14b8a6;transition:width .25s ease}.progress-label{margin-top:7px;color:#d1d5db}.terminal{background:#000;color:#fff;border:1px solid #4b5563;border-radius:8px;padding:14px;height:280px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:13px/1.45 Consolas,"Courier New",monospace}</style></head><body>
 <h1>AnimeAV1 → MyAnimeList</h1><div class="muted">v%s · EX4100 ARMv7 · lectura SvelteKit por HTTP</div>
 <div class="card"><h2>AnimeAV1</h2><p>%s</p><form method="post" action="/cookie"><label>Cookie completa del navegador</label><textarea name="cookie" rows="3" placeholder="session=...; otra_cookie=...">%s</textarea><button>Guardar cookie</button> <a class="btn secondary" href="/check">Verificar</a></form><p class="muted">Pega el contenido completo de la cabecera Cookie. Se guarda únicamente en /data/config/config.json.</p></div>
 <div class="card"><h2>MyAnimeList</h2><p>%s</p><a class="btn" href="/oauth/start">Conectar con MAL</a> <a class="btn danger" href="/oauth/disconnect">Desconectar</a></div>
-<div class="card"><h2>Sincronización</h2><form method="post" action="/settings"><label>Intervalo en minutos</label><input type="number" min="1" name="interval" value="%d"><label><input style="width:auto" type="checkbox" name="dry" %s> Modo simulación (no escribe en MAL)</label><br><label><input style="width:auto" type="checkbox" name="increase" %s> Solo aumentar episodios</label><br><label><input style="width:auto" type="checkbox" name="auto" %s> Sincronización automática</label><br><br><button>Guardar ajustes</button> <button id="syncButton" formaction="/sync">Sincronizar ahora</button></form><div id="progressWrap" class="progress-wrap"><div class="progress-track"><div id="progressBar" class="progress-bar"></div></div><div id="progressLabel" class="progress-label"></div></div></div>
+<div class="card"><h2>Sincronización</h2><form method="post" action="/settings"><label>Intervalo en minutos</label><input type="number" min="1" name="interval" value="%d"><label><input style="width:auto" type="checkbox" name="dry" %s> Modo simulación (no escribe en MAL)</label><br><label><input style="width:auto" type="checkbox" name="increase" %s> Solo aumentar episodios</label><br><label><input style="width:auto" type="checkbox" name="auto" %s> Sincronización automática</label><br><br><button>Guardar ajustes</button> <button id="syncButton" formaction="/sync">Sincronizar ahora</button></form><form method="post" action="/sync/stop" style="display:inline"><button id="stopButton" class="danger" style="display:none">Detener sincronización</button></form> <form method="post" action="/cache/clear" style="display:inline" onsubmit="return confirm('¿Eliminar toda la caché de coincidencias? La siguiente sincronización volverá a consultar MAL.')"><button id="clearCacheButton" class="secondary">Eliminar caché</button></form><p class="muted">Caché persistente: <b id="cacheCount">%d</b> coincidencias · revalidación cada 24 horas.</p><div id="progressWrap" class="progress-wrap"><div class="progress-track"><div id="progressBar" class="progress-bar"></div></div><div id="progressLabel" class="progress-label"></div></div></div>
 <div class="card"><h2>Estado</h2><div class="grid"><div class="stat"><b>Ejecutándose</b><br><span id="runningText">%s</span></div><div class="stat"><b>Último estado</b><br><span id="lastStatus">%s</span></div><div class="stat"><b>Encontrados</b><br><span id="found">%d</span></div><div class="stat"><b>Actualizados</b><br><span id="updated">%d</span></div><div class="stat"><b>Errores</b><br><span id="errors">%d</span></div></div><p id="lastMessage" class="msg">%s</p><p><a class="btn secondary" href="/health">JSON</a> <a class="btn secondary" href="/history">Historial</a></p></div>
 <div class="card"><h2>Últimos logs</h2><div id="terminal" class="terminal">%s</div></div>
 <script>
 const initial={running:%t,processed:%d,total:%d,message:%q,trigger:%q,percent:%d};
-function updateProgress(x){const wrap=document.getElementById('progressWrap');const bar=document.getElementById('progressBar');const label=document.getElementById('progressLabel');const manual=x.running&&x.progress_trigger==='manual';wrap.style.display=manual?'block':'none';if(manual){const pct=x.progress_total>0?Math.min(100,Math.floor(x.progress_processed*100/x.progress_total)):0;bar.style.width=pct+'%%';label.textContent=(x.progress_message||'Sincronizando')+' · '+x.progress_processed+'/'+x.progress_total+' ('+pct+'%%)';}}
-async function pollStatus(){try{const r=await fetch('/api/status',{cache:'no-store'});const x=await r.json();document.getElementById('runningText').textContent=x.running?'Sí':'No';document.getElementById('lastStatus').textContent=x.last_status||'Nunca';document.getElementById('found').textContent=x.last?.found??0;document.getElementById('updated').textContent=x.last?.updated??0;document.getElementById('errors').textContent=x.last?.errors??0;document.getElementById('lastMessage').textContent=x.last?.message||'';updateProgress(x);}catch(e){}}
+function updateProgress(x){const wrap=document.getElementById('progressWrap');const bar=document.getElementById('progressBar');const label=document.getElementById('progressLabel');const stop=document.getElementById('stopButton');const clear=document.getElementById('clearCacheButton');const manual=x.running&&x.progress_trigger==='manual';wrap.style.display=manual?'block':'none';stop.style.display=manual?'inline-block':'none';clear.disabled=!!x.running;if(manual){const pct=x.progress_total>0?Math.min(100,Math.floor(x.progress_processed*100/x.progress_total)):0;bar.style.width=pct+'%%';label.textContent=(x.progress_message||'Sincronizando')+' · '+x.progress_processed+'/'+x.progress_total+' ('+pct+'%%)';}}
+async function pollStatus(){try{const r=await fetch('/api/status',{cache:'no-store'});const x=await r.json();document.getElementById('runningText').textContent=x.running?'Sí':'No';document.getElementById('lastStatus').textContent=x.last_status||'Nunca';document.getElementById('found').textContent=x.last?.found??0;document.getElementById('updated').textContent=x.last?.updated??0;document.getElementById('errors').textContent=x.last?.errors??0;document.getElementById('lastMessage').textContent=x.last?.message||'';document.getElementById('cacheCount').textContent=x.cache_entries??0;updateProgress(x);}catch(e){}}
 async function pollLogs(){try{const r=await fetch('/api/logs',{cache:'no-store'});const x=await r.json();const t=document.getElementById('terminal');t.textContent=x.text||'Sin historial';t.scrollTop=0;}catch(e){}}
 updateProgress({running:initial.running,progress_processed:initial.processed,progress_total:initial.total,progress_message:initial.message,progress_trigger:initial.trigger});
 setInterval(pollStatus,1000);setInterval(pollLogs,2000);pollStatus();pollLogs();
-</script></body></html>`, appVersion, cookieStatus, html.EscapeString(s.Settings.Cookie), malStatus, s.Settings.IntervalMinutes, checked(s.Settings.DryRun), checked(s.Settings.OnlyIncrease), checked(s.Settings.AutoSync), runText, html.EscapeString(last), s.Last.Found, s.Last.Updated, s.Last.Errors, html.EscapeString(s.Last.Message), terminal, running, processed, total, progressMessage, progressTrigger, percent)
+</script></body></html>`, appVersion, cookieStatus, html.EscapeString(s.Settings.Cookie), malStatus, s.Settings.IntervalMinutes, checked(s.Settings.DryRun), checked(s.Settings.OnlyIncrease), checked(s.Settings.AutoSync), cacheCount, runText, html.EscapeString(last), s.Last.Found, s.Last.Updated, s.Last.Errors, html.EscapeString(s.Last.Message), terminal, running, processed, total, progressMessage, progressTrigger, percent)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	io.WriteString(w, page)
 }
@@ -550,11 +632,15 @@ func parseLibraryEntries(body string) ([]AVItem, error) {
 	return items, nil
 }
 func (a *App) scrape(cookie string) ([]AVItem, error) {
+	return a.scrapeContext(context.Background(), cookie)
+}
+
+func (a *App) scrapeContext(ctx context.Context, cookie string) ([]AVItem, error) {
 	if strings.TrimSpace(cookie) == "" {
 		return nil, errors.New("falta la cookie de AnimeAV1")
 	}
 	u := getenv("ANIMEAV1_LIBRARY_URL", "https://animeav1.com/cuenta/listas")
-	req, err := http.NewRequest("GET", u, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -689,6 +775,10 @@ func (a *App) refreshIfNeeded() error {
 	return nil
 }
 func (a *App) malRequest(method, path string, vals url.Values, out any) error {
+	return a.malRequestContext(context.Background(), method, path, vals, out)
+}
+
+func (a *App) malRequestContext(ctx context.Context, method, path string, vals url.Values, out any) error {
 	if err := a.refreshIfNeeded(); err != nil {
 		return err
 	}
@@ -699,7 +789,10 @@ func (a *App) malRequest(method, path string, vals url.Values, out any) error {
 	if vals != nil {
 		body = strings.NewReader(vals.Encode())
 	}
-	req, _ := http.NewRequest(method, apiBase+path, body)
+	req, err := http.NewRequestWithContext(ctx, method, apiBase+path, body)
+	if err != nil {
+		return err
+	}
 	req.Header.Set("Authorization", "Bearer "+tok)
 	if vals != nil {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -786,11 +879,11 @@ func candidateTitles(it AVItem) []string {
 	}
 	return out
 }
-func (a *App) resolve(it AVItem) (MALAnime, int, error) {
+func (a *App) resolve(ctx context.Context, it AVItem) (MALAnime, int, error) {
 	ids := map[int]string{}
 	for _, title := range candidateTitles(it) {
 		var sr MALSearch
-		if err := a.malRequest("GET", "/anime?q="+url.QueryEscape(title)+"&limit=10", nil, &sr); err != nil {
+		if err := a.malRequestContext(ctx, "GET", "/anime?q="+url.QueryEscape(title)+"&limit=10", nil, &sr); err != nil {
 			return MALAnime{}, 0, err
 		}
 		for _, x := range sr.Data {
@@ -803,7 +896,7 @@ func (a *App) resolve(it AVItem) (MALAnime, int, error) {
 	var best MALAnime
 	for id := range ids {
 		var anime MALAnime
-		if err := a.malRequest("GET", fmt.Sprintf("/anime/%d?fields=id,title,num_episodes,my_list_status", id), nil, &anime); err != nil {
+		if err := a.malRequestContext(ctx, "GET", fmt.Sprintf("/anime/%d?fields=id,title,num_episodes,my_list_status", id), nil, &anime); err != nil {
 			continue
 		}
 		titleScore := 0
@@ -863,6 +956,50 @@ func (a *App) syncHandler(w http.ResponseWriter, r *http.Request) {
 	go a.runSync("manual")
 	redirectHome(w, r)
 }
+
+func (a *App) stopSyncHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "POST", 405)
+		return
+	}
+	a.mu.Lock()
+	cancel := a.cancelSync
+	manual := a.running && a.progressTrigger == "manual"
+	if manual {
+		a.progressMessage = "Deteniendo sincronización…"
+	}
+	a.mu.Unlock()
+	if manual && cancel != nil {
+		cancel()
+		a.appendHistory(map[string]any{"ts": time.Now().Unix(), "event": "sync_stop_requested", "message": "Detención manual solicitada"})
+	}
+	redirectHome(w, r)
+}
+
+func (a *App) clearCacheHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "POST", 405)
+		return
+	}
+	a.mu.Lock()
+	running := a.running
+	a.mu.Unlock()
+	if running {
+		http.Error(w, "Detén la sincronización antes de eliminar la caché", http.StatusConflict)
+		return
+	}
+	a.cacheMu.Lock()
+	a.cache = map[string]CacheEntry{}
+	err := a.saveCacheLocked()
+	a.cacheMu.Unlock()
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	a.appendHistory(map[string]any{"ts": time.Now().Unix(), "event": "cache_cleared", "message": "Caché eliminada"})
+	redirectHome(w, r)
+}
+
 func (a *App) saveSettingsNoRedirect(r *http.Request) {
 	n, _ := strconv.Atoi(r.FormValue("interval"))
 	if n < 1 {
@@ -876,13 +1013,41 @@ func (a *App) saveSettingsNoRedirect(r *http.Request) {
 	a.save()
 	a.mu.Unlock()
 }
+
+func sourceUnchanged(c CacheEntry, it AVItem) bool {
+	return c.SourceTitle == normalize(it.Title) && c.SourceSeen == it.Seen && c.SourceStatus == it.Status && c.SourceTotal == it.Total
+}
+
+func desiredFor(it AVItem, maxEpisodes int) int {
+	desired := it.Seen
+	if maxEpisodes > 0 && desired > maxEpisodes {
+		desired = maxEpisodes
+	}
+	return desired
+}
+
+func animeState(anime MALAnime) (int, string) {
+	if anime.MyListStatus == nil {
+		return 0, ""
+	}
+	return anime.MyListStatus.NumEpisodesWatched, anime.MyListStatus.Status
+}
+
+func (a *App) getCachedMAL(ctx context.Context, c CacheEntry) (MALAnime, error) {
+	var anime MALAnime
+	err := a.malRequestContext(ctx, "GET", fmt.Sprintf("/anime/%d?fields=id,title,num_episodes,my_list_status", c.MALID), nil, &anime)
+	return anime, err
+}
+
 func (a *App) runSync(trigger string) {
 	a.mu.Lock()
 	if a.running {
 		a.mu.Unlock()
 		return
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	a.running = true
+	a.cancelSync = cancel
 	a.progressProcessed = 0
 	a.progressTotal = 0
 	a.progressMessage = "Preparando sincronización"
@@ -890,12 +1055,21 @@ func (a *App) runSync(trigger string) {
 	cookie := a.state.Settings.Cookie
 	dry := a.state.Settings.DryRun
 	only := a.state.Settings.OnlyIncrease
-	a.state.Last = LastRun{Status: "running", Started: time.Now().Unix(), Message: "Sincronización " + trigger}
+	started := time.Now().Unix()
+	a.state.Last = LastRun{Status: "running", Started: started, Message: "Sincronización " + trigger}
 	a.save()
 	a.mu.Unlock()
-	last := LastRun{Status: "ok", Started: time.Now().Unix()}
-	items, err := a.scrape(cookie)
+	defer cancel()
+
+	last := LastRun{Status: "ok", Started: started}
+	items, err := a.scrapeContext(ctx, cookie)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+			last.Status = "cancelled"
+			last.Message = "Detenida por el usuario antes de leer la biblioteca"
+			a.finish(last)
+			return
+		}
 		a.mu.Lock()
 		a.state.AnimeOK = false
 		a.state.AnimeMessage = err.Error()
@@ -917,58 +1091,158 @@ func (a *App) runSync(trigger string) {
 	a.progressTotal = len(items)
 	a.progressMessage = "Procesando biblioteca"
 	a.mu.Unlock()
+
+	revalidateAfter := time.Duration(getenvInt("CACHE_REVALIDATE_HOURS", 24)) * time.Hour
+	now := time.Now()
+	cancelled := false
+
 	for idx, it := range items {
+		select {
+		case <-ctx.Done():
+			cancelled = true
+			break
+		default:
+		}
+		if cancelled {
+			break
+		}
+
 		a.mu.Lock()
-		a.progressProcessed = idx + 1
+		a.progressProcessed = idx
 		a.progressMessage = "Procesando: " + it.Title
 		a.mu.Unlock()
-		anime, matchScore, err := a.resolve(it)
-		if err != nil {
-			last.Errors++
-			last.Unmatched = append(last.Unmatched, it.Title+": "+err.Error())
-			continue
-		}
-		current := 0
-		if anime.MyListStatus != nil {
-			current = anime.MyListStatus.NumEpisodesWatched
-		}
-		desired := it.Seen
-		if anime.NumEpisodes > 0 && desired > anime.NumEpisodes {
-			desired = anime.NumEpisodes
-		}
-		if only && desired < current {
-			last.Skipped++
-			continue
-		}
+
 		status := malStatus(it.Status)
-		if desired == current && anime.MyListStatus != nil && anime.MyListStatus.Status == status {
+		cache, cached := a.cacheGet(it.MediaID)
+		fresh := cached && cache.LastValidated > 0 && now.Sub(time.Unix(cache.LastValidated, 0)) < revalidateAfter
+		unchanged := cached && sourceUnchanged(cache, it)
+		desiredCached := desiredFor(it, cache.SourceTotal)
+		cacheAlreadyCorrect := cache.MALSeen == desiredCached && cache.MALStatus == status
+		cacheProtected := only && desiredCached < cache.MALSeen
+
+		// Ruta rápida: la fuente no cambió, MAL fue validado recientemente y el estado cacheado ya es correcto.
+		if unchanged && fresh && (cacheAlreadyCorrect || cacheProtected) {
 			last.Skipped++
+			a.mu.Lock()
+			a.progressProcessed = idx + 1
+			a.progressMessage = "Sin cambios (caché): " + it.Title
+			a.mu.Unlock()
 			continue
 		}
-		if !dry {
-			vals := url.Values{"status": {status}, "num_watched_episodes": {strconv.Itoa(desired)}}
-			if err := a.malRequest("PUT", fmt.Sprintf("/anime/%d/my_list_status", anime.ID), vals, nil); err != nil {
+
+		var anime MALAnime
+		matchScore := 0
+		needResolve := !cached || cache.MALID == 0 || cache.SourceTitle != normalize(it.Title)
+		needValidate := cached && (!fresh || !unchanged)
+
+		if !needResolve && needValidate {
+			anime, err = a.getCachedMAL(ctx, cache)
+			if err != nil {
+				if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+					cancelled = true
+					break
+				}
+				// El ID cacheado puede haber quedado obsoleto: se resuelve de nuevo por título.
+				a.cacheDelete(it.MediaID)
+				needResolve = true
+			} else {
+				matchScore = cache.MatchScore
+			}
+		}
+
+		if needResolve {
+			anime, matchScore, err = a.resolve(ctx, it)
+			if err != nil {
+				if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+					cancelled = true
+					break
+				}
 				last.Errors++
 				last.Unmatched = append(last.Unmatched, it.Title+": "+err.Error())
 				continue
 			}
+		} else if !needValidate {
+			anime = MALAnime{ID: cache.MALID, Title: cache.MALTitle, NumEpisodes: cache.SourceTotal}
+			anime.MyListStatus = &struct {
+				Status             string `json:"status"`
+				NumEpisodesWatched int    `json:"num_episodes_watched"`
+			}{Status: cache.MALStatus, NumEpisodesWatched: cache.MALSeen}
+			matchScore = cache.MatchScore
 		}
+
+		current, currentStatus := animeState(anime)
+		desired := desiredFor(it, anime.NumEpisodes)
+		entry := CacheEntry{
+			MediaID: it.MediaID, MALID: anime.ID, MALTitle: anime.Title, MatchScore: matchScore,
+			SourceTitle: normalize(it.Title), SourceSeen: it.Seen, SourceStatus: it.Status, SourceTotal: it.Total,
+			MALSeen: current, MALStatus: currentStatus, LastValidated: time.Now().Unix(), UpdatedAt: time.Now().Unix(),
+		}
+
+		if only && desired < current {
+			last.Skipped++
+			a.cachePut(entry)
+			a.mu.Lock()
+			a.progressProcessed = idx + 1
+			a.mu.Unlock()
+			continue
+		}
+		if desired == current && currentStatus == status {
+			last.Skipped++
+			a.cachePut(entry)
+			a.mu.Lock()
+			a.progressProcessed = idx + 1
+			a.mu.Unlock()
+			continue
+		}
+		if !dry {
+			vals := url.Values{"status": {status}, "num_watched_episodes": {strconv.Itoa(desired)}}
+			if err := a.malRequestContext(ctx, "PUT", fmt.Sprintf("/anime/%d/my_list_status", anime.ID), vals, nil); err != nil {
+				if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+					cancelled = true
+					break
+				}
+				last.Errors++
+				last.Unmatched = append(last.Unmatched, it.Title+": "+err.Error())
+				continue
+			}
+			entry.MALSeen = desired
+			entry.MALStatus = status
+			entry.LastValidated = time.Now().Unix()
+			entry.UpdatedAt = entry.LastValidated
+		}
+		a.cachePut(entry)
 		last.Updated++
 		a.appendHistory(map[string]any{"ts": time.Now().Unix(), "title": it.Title, "animeav1_media_id": it.MediaID, "mal_id": anime.ID, "mal_title": anime.Title, "match_score": matchScore, "from": current, "to": desired, "status": status, "dry_run": dry})
+		a.mu.Lock()
+		a.progressProcessed = idx + 1
+		a.mu.Unlock()
 	}
-	if last.Errors > 0 {
-		last.Status = "partial"
+
+	if cancelled {
+		a.mu.Lock()
+		processed := a.progressProcessed
+		a.mu.Unlock()
+		last.Status = "cancelled"
+		last.Message = fmt.Sprintf("Detenida por el usuario: procesados %d de %d, actualizados %d, omitidos %d, errores %d", processed, last.Found, last.Updated, last.Skipped, last.Errors)
+	} else {
+		if last.Errors > 0 {
+			last.Status = "partial"
+		}
+		last.Message = fmt.Sprintf("Encontrados %d, actualizados %d, omitidos %d, errores %d", last.Found, last.Updated, last.Skipped, last.Errors)
 	}
-	last.Message = fmt.Sprintf("Encontrados %d, actualizados %d, omitidos %d, errores %d", last.Found, last.Updated, last.Skipped, last.Errors)
 	a.finish(last)
 }
+
 func (a *App) finish(last LastRun) {
 	last.Finished = time.Now().Unix()
 	a.mu.Lock()
 	a.running = false
+	a.cancelSync = nil
 	a.state.Last = last
 	a.progressMessage = last.Message
-	a.progressProcessed = a.progressTotal
+	if last.Status != "cancelled" {
+		a.progressProcessed = a.progressTotal
+	}
 	a.save()
 	a.mu.Unlock()
 	a.appendHistory(last)
@@ -978,7 +1252,8 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	ok := a.state.Last.Status != "error" && a.state.Last.Status != "partial"
-	out := map[string]any{"ok": ok, "running": a.running, "progress_processed": a.progressProcessed, "progress_total": a.progressTotal, "progress_message": a.progressMessage, "progress_trigger": a.progressTrigger, "last_status": a.state.Last.Status, "last_finished": a.state.Last.Finished, "animeav1_session": a.state.AnimeOK, "mal_authorized": a.state.Token.AccessToken != "", "mal_user": a.state.MALUsername, "dry_run": a.state.Settings.DryRun, "auto_sync": a.state.Settings.AutoSync, "last": a.state.Last}
+	cacheEntries := a.cacheCount()
+	out := map[string]any{"ok": ok, "running": a.running, "cache_entries": cacheEntries, "progress_processed": a.progressProcessed, "progress_total": a.progressTotal, "progress_message": a.progressMessage, "progress_trigger": a.progressTrigger, "last_status": a.state.Last.Status, "last_finished": a.state.Last.Finished, "animeav1_session": a.state.AnimeOK, "mal_authorized": a.state.Token.AccessToken != "", "mal_user": a.state.MALUsername, "dry_run": a.state.Settings.DryRun, "auto_sync": a.state.Settings.AutoSync, "last": a.state.Last}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
 }

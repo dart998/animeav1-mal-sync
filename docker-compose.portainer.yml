@@ -1,6 +1,6 @@
 services:
   animeav1-mal-sync:
-    image: ovelayos/animeav1-mal-sync:v1.1.0
+    image: ovelayos/animeav1-mal-sync:v1.2.0
     container_name: animeav1-mal-sync
     restart: unless-stopped
     ports:
@@ -17,6 +17,7 @@ services:
       DATA_DIR: "/data"
       LISTEN_ADDR: ":8787"
       LOG_TIMEZONE: "Europe/Madrid"
+      CACHE_REVALIDATE_HOURS: "24"
     volumes:
       - animeav1-mal-data:/data
     security_opt:

@@ -1,90 +1,164 @@
-# AnimeAV1 → MyAnimeList Sync v1.1.0
+# AnimeAV1 → MyAnimeList Sync
 
-Aplicación estable para leer la biblioteca de AnimeAV1 y actualizar únicamente MyAnimeList.
+Aplicación web en Go que lee la biblioteca de AnimeAV1 y sincroniza el progreso con MyAnimeList. AnimeAV1 se utiliza siempre como origen de solo lectura: la aplicación nunca escribe ni modifica datos allí.
 
-AnimeAV1 se utiliza siempre como origen de solo lectura. La aplicación no llama a endpoints de escritura de AnimeAV1.
+La imagen está preparada para `linux/arm/v7` y se puede ejecutar en un WD My Cloud EX4100 mediante Docker y Portainer Community Edition.
 
-## Cambios de v1.1.0
+## Funciones principales
 
-- Barra de progreso durante la sincronización manual, con anime actual, elementos procesados, total y porcentaje.
-- Caja de últimos logs integrada en la pantalla principal, con aspecto de terminal, texto blanco y fondo negro.
-- Actualización automática del progreso cada segundo y de los logs cada dos segundos, sin recargar la página.
-- Eliminado el botón `JSONL` de la interfaz. El endpoint `/history/raw` se conserva internamente para compatibilidad y diagnóstico.
-- Intervalo predeterminado de sincronización automática cambiado a 60 minutos.
-- Añadido el favicon oficial de AnimeAV1, servido localmente por la aplicación.
+- Autorización de MyAnimeList mediante OAuth PKCE.
+- Lectura de la biblioteca desde `https://animeav1.com/cuenta/listas`.
+- Emparejamiento de títulos de AnimeAV1 con sus entradas correspondientes en MAL.
+- Actualización de episodios y estado solamente cuando existen cambios.
+- Sincronización manual o automática.
+- Intervalo automático predeterminado de 60 minutos.
+- Barra de progreso para sincronizaciones manuales.
+- Botón para detener una sincronización manual, incluidas sus peticiones HTTP activas.
+- Terminal integrada con los últimos logs y timestamp legible.
+- Historial persistente en JSONL, aunque el botón JSONL no se muestra en la interfaz.
+- Favicon local de AnimeAV1.
 
-No se ha modificado el scraping de AnimeAV1, OAuth, matching ni la lógica de escritura en MAL.
+## Caché y rendimiento
 
-## Construir y publicar con versión y latest
-
-Desde PowerShell, dentro de la carpeta del proyecto:
-
-```powershell
-$VERSION = "v1.1.0"
-
-docker buildx build `
-  --platform linux/arm/v7 `
-  -t "ovelayos/animeav1-mal-sync:$VERSION" `
-  -t "ovelayos/animeav1-mal-sync:latest" `
-  --push .
-```
-
-Las dos etiquetas se generan en la misma compilación y apuntan al mismo digest.
-
-## Despliegue en Portainer
-
-El proceso escucha dentro del contenedor en el puerto `8787`.
+Las coincidencias AnimeAV1 ↔ MAL y su último estado confirmado se guardan en:
 
 ```text
-Host 8787 → Contenedor 8787/TCP
+/data/cache.json
 ```
 
-La interfaz queda disponible en:
+En cada ejecución la aplicación descarga una sola vez la biblioteca de AnimeAV1. Después, para cada anime:
+
+1. Busca su entrada en la caché.
+2. Si título, episodios y estado no cambiaron y la entrada todavía está dentro del periodo de validación, la omite sin consultar MAL.
+3. Si cambió o debe revalidarse, consulta directamente el `mal_id` conocido.
+4. Solo vuelve a buscar por título cuando el anime es nuevo, el título cambió o el ID almacenado dejó de ser válido.
+5. Solo envía un `PUT` a MAL cuando el estado o los episodios realmente difieren.
+
+La revalidación periódica contra MAL es de 24 horas de forma predeterminada. Esto detecta cambios realizados directamente en MAL sin repetir todas las búsquedas en cada sincronización horaria.
+
+El botón **Eliminar caché** borra únicamente `/data/cache.json`. No elimina la cookie de AnimeAV1, OAuth, configuración ni historial. La caché no puede eliminarse mientras se ejecuta una sincronización.
+
+## Archivos persistentes
+
+- `/data/config/config.json`: configuración, cookie de AnimeAV1 y credenciales OAuth de MAL.
+- `/data/cache.json`: coincidencias y último estado validado.
+- `/data/history.jsonl`: historial de sincronizaciones.
+
+No elimines el volumen persistente al actualizar el contenedor.
+
+## Variables de entorno para Portainer
+
+El repositorio incluye `.env.example`. Copia su contenido en las variables de entorno del stack o impórtalo desde Portainer después de sustituir los valores de ejemplo.
+
+Variables principales:
+
+| Variable | Valor recomendado | Descripción |
+|---|---:|---|
+| `MAL_CLIENT_ID` | obligatorio | Client ID de la aplicación creada en MAL. |
+| `MAL_CLIENT_SECRET` | según la aplicación | Client secret de MAL. |
+| `MAL_REDIRECT_URI` | `http://IP_DEL_EX4100:8787/oauth/callback` | Debe coincidir exactamente con el registrado en MAL. |
+| `SYNC_INTERVAL_MINUTES` | `60` | Intervalo de sincronización automática. |
+| `AUTO_SYNC` | `false` | Activa o desactiva la sincronización automática. |
+| `DRY_RUN` | `true` inicialmente | Simula las actualizaciones sin escribir en MAL. |
+| `ONLY_INCREASE` | `true` | Impide reducir episodios vistos. |
+| `TITLE_MATCH_THRESHOLD` | `80` | Puntuación mínima para aceptar una coincidencia. |
+| `CACHE_REVALIDATE_HOURS` | `24` | Tiempo máximo antes de comprobar de nuevo una entrada en MAL. |
+| `LOG_TIMEZONE` | `Europe/Madrid` | Zona horaria mostrada en los logs. |
+| `DATA_DIR` | `/data` | Directorio persistente. |
+| `LISTEN_ADDR` | `:8787` | Dirección y puerto del servidor web. |
+
+La cookie de AnimeAV1 se introduce y verifica desde la interfaz web; no es necesario guardarla en el archivo de entorno.
+
+## Despliegue con Portainer
+
+Usa siempre una etiqueta fija en producción:
+
+```yaml
+services:
+  animeav1-mal-sync:
+    image: ovelayos/animeav1-mal-sync:v1.2.0
+    container_name: animeav1-mal-sync
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    env_file:
+      - stack.env
+    volumes:
+      - animeav1-mal-data:/data
+    security_opt:
+      - seccomp=unconfined
+
+volumes:
+  animeav1-mal-data:
+```
+
+En el editor web de Portainer también puedes mantener las variables dentro de `environment:`. La opción `env_file` solo debe usarse cuando el archivo exista realmente en el host o el método de despliegue permita adjuntarlo.
+
+Acceso:
 
 ```text
 http://IP_DEL_EX4100:8787
 ```
 
-Usa en producción la etiqueta fija:
+## Publicar una nueva versión
 
-```text
-ovelayos/animeav1-mal-sync:v1.1.0
+El script `release.sh` automatiza GitHub y Docker Hub en una sola ejecución. Debe ejecutarse desde una copia clonada del repositorio que tenga configurado el remoto `origin` por SSH.
+
+Primera preparación:
+
+```bash
+chmod +x release.sh
 ```
 
-No elimines el volumen persistente al actualizar. Se conservarán la cookie, los tokens de MAL, los ajustes y el historial.
+Publicación:
 
-## Variables necesarias
-
-- `MAL_CLIENT_ID`
-- `MAL_CLIENT_SECRET`, únicamente si la aplicación MAL lo requiere
-- `MAL_REDIRECT_URI`, por ejemplo `http://IP_DEL_EX4100:8787/oauth/callback`
-
-## Variables opcionales
-
-- `ANIMEAV1_LIBRARY_URL`: `https://animeav1.com/cuenta/listas`
-- `TITLE_MATCH_THRESHOLD`: `80`
-- `SYNC_INTERVAL_MINUTES`: `60`
-- `DRY_RUN`: `true`
-- `ONLY_INCREASE`: `true`
-- `AUTO_SYNC`: `false`
-- `LOG_TIMEZONE`: `Europe/Madrid`
-- `DATA_DIR`: `/data`
-- `LISTEN_ADDR`: `:8787`
-
-## Historial
-
-La pantalla principal muestra las últimas 40 líneas con formato de terminal. La vista ampliada continúa disponible en:
-
-```text
-http://IP_DEL_EX4100:8787/history
+```bash
+./release.sh
 ```
 
-El historial se presenta de más reciente a más antiguo y con timestamp local al principio.
+El script:
 
-## Primera sincronización real
+1. Pregunta la versión, por ejemplo `v1.3.0`.
+2. Valida el formato y comprueba que la etiqueta todavía no exista.
+3. Arranca `ssh-agent` cuando sea necesario y añade `~/.ssh/id_ed25519.pem` o la clave indicada.
+4. Verifica el remoto y que la rama local incluya los últimos cambios de `origin/main`.
+5. Actualiza `VERSION` y fija `docker-compose.portainer.yml` a la nueva etiqueta.
+6. Ejecuta `git add -A`, por lo que incluye archivos nuevos, modificados y eliminados.
+7. Muestra los cambios y pide confirmación.
+8. Crea un commit con el nombre de la versión y una etiqueta Git anotada.
+9. Sube la rama y la etiqueta a GitHub.
+10. Construye una sola imagen ARMv7 y la publica con dos etiquetas:
 
-1. Guarda y verifica la cookie completa de AnimeAV1.
-2. Conecta MyAnimeList.
-3. Ejecuta primero una sincronización con **Modo simulación** activado.
-4. Revisa el progreso y los últimos logs.
-5. Desactiva el modo simulación únicamente cuando los emparejamientos sean correctos.
+```text
+ovelayos/animeav1-mal-sync:v1.3.0
+ovelayos/animeav1-mal-sync:latest
+```
+
+Las dos etiquetas apuntan al mismo digest. Las versiones anteriores conservan su etiqueta fija para permitir rollback.
+
+### Por qué se usa `git add -A`
+
+`git commit -am` solo incluye archivos que Git ya estaba siguiendo. No incorpora archivos nuevos como un favicon, un script o un archivo de configuración. `git add -A` evita que una versión se publique incompleta.
+
+### Requisitos del script
+
+- Git.
+- Acceso SSH al repositorio de GitHub.
+- Clave SSH válida; por defecto `~/.ssh/id_ed25519.pem`.
+- Docker iniciado.
+- Docker Buildx.
+- Acceso a Docker Hub mediante contraseña o Access Token.
+
+## Publicación manual alternativa
+
+```bash
+VERSION=v1.2.0
+
+docker buildx build \
+  --platform linux/arm/v7 \
+  -t "ovelayos/animeav1-mal-sync:${VERSION}" \
+  -t "ovelayos/animeav1-mal-sync:latest" \
+  --push .
+```
+
+En Portainer utiliza la etiqueta fija de la versión y conserva siempre el volumen `animeav1-mal-data`.

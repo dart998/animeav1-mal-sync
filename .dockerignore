@@ -1,0 +1,6 @@
+.git
+.gitignore
+*.zip
+README.md
+publicar.sh
+docker-compose.portainer.yml
