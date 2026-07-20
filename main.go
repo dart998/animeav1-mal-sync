@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	appVersion = "1.0.0"
+	appVersion = "1.1.0"
 	authURL    = "https://myanimelist.net/v1/oauth2/authorize"
 	tokenURL   = "https://myanimelist.net/v1/oauth2/token"
 	apiBase    = "https://api.myanimelist.net/v2"
@@ -69,11 +69,15 @@ type State struct {
 }
 
 type App struct {
-	mu      sync.Mutex
-	state   State
-	running bool
-	dataDir string
-	client  *http.Client
+	mu                sync.Mutex
+	state             State
+	running           bool
+	progressProcessed int
+	progressTotal     int
+	progressMessage   string
+	progressTrigger   string
+	dataDir           string
+	client            *http.Client
 }
 
 type AVItem struct {
@@ -143,8 +147,10 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", app.dashboard)
+	mux.HandleFunc("/favicon.svg", favicon)
 	mux.HandleFunc("/health", app.health)
 	mux.HandleFunc("/api/status", app.health)
+	mux.HandleFunc("/api/logs", app.logsAPI)
 	mux.HandleFunc("/cookie", app.saveCookie)
 	mux.HandleFunc("/settings", app.saveSettings)
 	mux.HandleFunc("/check", app.check)
@@ -162,8 +168,24 @@ func main() {
 	log.Fatal(http.ListenAndServe(addr, mux))
 }
 
+func favicon(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	io.WriteString(w, `<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M8 41.5L103.447 206.531H179.723L122.482 107.593H275.17L160.688 305.603L198.893 371.562L389.518 41.5H8Z" fill="#000"/>
+    <path d="M389.518 107.593H465.794L256 470.5L217.795 404.541L389.518 107.593Z" fill="#000"/>
+    <path d="M504 41.5L465.795 107.459L427.723 41.5H504Z" fill="#000"/>
+    <style>
+        path { fill: #00A691; }
+        @media (prefers-color-scheme: dark) {
+            path { fill: #3CECD6; }
+        }
+    </style>
+</svg>`)
+}
+
 func (a *App) load() {
-	a.state.Settings.IntervalMinutes = getenvInt("SYNC_INTERVAL_MINUTES", 15)
+	a.state.Settings.IntervalMinutes = getenvInt("SYNC_INTERVAL_MINUTES", 60)
 	a.state.Settings.DryRun = getenvBool("DRY_RUN", true)
 	a.state.Settings.OnlyIncrease = getenvBool("ONLY_INCREASE", true)
 	a.state.Settings.AutoSync = getenvBool("AUTO_SYNC", false)
@@ -176,7 +198,7 @@ func (a *App) load() {
 		_ = json.Unmarshal(b, &a.state)
 	}
 	if a.state.Settings.IntervalMinutes <= 0 {
-		a.state.Settings.IntervalMinutes = 15
+		a.state.Settings.IntervalMinutes = 60
 	}
 }
 func (a *App) configPath() string {
@@ -205,7 +227,7 @@ func (a *App) scheduler() {
 		auto := a.state.Settings.AutoSync
 		a.mu.Unlock()
 		if mins < 1 {
-			mins = 15
+			mins = 60
 		}
 		if auto && !running && (last == 0 || time.Now().Unix()-last >= int64(mins*60)) {
 			go a.runSync("scheduled")
@@ -222,6 +244,10 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	s := a.state
 	running := a.running
+	processed := a.progressProcessed
+	total := a.progressTotal
+	progressMessage := a.progressMessage
+	progressTrigger := a.progressTrigger
 	a.mu.Unlock()
 	cookieStatus := "❌ Sin configurar"
 	if s.Settings.Cookie != "" {
@@ -248,17 +274,34 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 	if running {
 		runText = "Sí"
 	}
-	page := fmt.Sprintf(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>AnimeAV1 → MAL</title><style>
-body{font-family:Arial,sans-serif;background:#111827;color:#e5e7eb;max-width:900px;margin:30px auto;padding:0 16px}h1{margin-bottom:8px}.card{background:#1f2937;border-radius:12px;padding:20px;margin:16px 0}input,textarea{width:100%%;box-sizing:border-box;background:#111827;color:#fff;border:1px solid #4b5563;border-radius:8px;padding:10px;margin:6px 0 12px}button,.btn{display:inline-block;background:#14b8a6;color:#041311;border:0;border-radius:8px;padding:10px 15px;font-weight:bold;text-decoration:none;cursor:pointer}.secondary{background:#374151;color:#fff}.danger{background:#ef4444;color:#fff}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}.stat{background:#111827;padding:12px;border-radius:8px}.muted{color:#9ca3af}.msg{white-space:pre-wrap;word-break:break-word}</style></head><body>
+	percent := 0
+	if total > 0 {
+		percent = processed * 100 / total
+	}
+	if percent > 100 {
+		percent = 100
+	}
+	terminal := html.EscapeString(a.recentHistoryText(40))
+	page := fmt.Sprintf(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>AnimeAV1 → MAL</title><link rel="icon" type="image/svg+xml" href="/favicon.svg"><style>
+body{font-family:Arial,sans-serif;background:#111827;color:#e5e7eb;max-width:900px;margin:30px auto;padding:0 16px}h1{margin-bottom:8px}.card{background:#1f2937;border-radius:12px;padding:20px;margin:16px 0}input,textarea{width:100%%;box-sizing:border-box;background:#111827;color:#fff;border:1px solid #4b5563;border-radius:8px;padding:10px;margin:6px 0 12px}button,.btn{display:inline-block;background:#14b8a6;color:#041311;border:0;border-radius:8px;padding:10px 15px;font-weight:bold;text-decoration:none;cursor:pointer}.secondary{background:#374151;color:#fff}.danger{background:#ef4444;color:#fff}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}.stat{background:#111827;padding:12px;border-radius:8px}.muted{color:#9ca3af}.msg{white-space:pre-wrap;word-break:break-word}.progress-wrap{display:none;margin-top:16px}.progress-track{height:22px;background:#111827;border:1px solid #4b5563;border-radius:999px;overflow:hidden}.progress-bar{height:100%%;width:0;background:#14b8a6;transition:width .25s ease}.progress-label{margin-top:7px;color:#d1d5db}.terminal{background:#000;color:#fff;border:1px solid #4b5563;border-radius:8px;padding:14px;height:280px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:13px/1.45 Consolas,"Courier New",monospace}</style></head><body>
 <h1>AnimeAV1 → MyAnimeList</h1><div class="muted">v%s · EX4100 ARMv7 · lectura SvelteKit por HTTP</div>
 <div class="card"><h2>AnimeAV1</h2><p>%s</p><form method="post" action="/cookie"><label>Cookie completa del navegador</label><textarea name="cookie" rows="3" placeholder="session=...; otra_cookie=...">%s</textarea><button>Guardar cookie</button> <a class="btn secondary" href="/check">Verificar</a></form><p class="muted">Pega el contenido completo de la cabecera Cookie. Se guarda únicamente en /data/config/config.json.</p></div>
 <div class="card"><h2>MyAnimeList</h2><p>%s</p><a class="btn" href="/oauth/start">Conectar con MAL</a> <a class="btn danger" href="/oauth/disconnect">Desconectar</a></div>
-<div class="card"><h2>Sincronización</h2><form method="post" action="/settings"><label>Intervalo en minutos</label><input type="number" min="1" name="interval" value="%d"><label><input style="width:auto" type="checkbox" name="dry" %s> Modo simulación (no escribe en MAL)</label><br><label><input style="width:auto" type="checkbox" name="increase" %s> Solo aumentar episodios</label><br><label><input style="width:auto" type="checkbox" name="auto" %s> Sincronización automática</label><br><br><button>Guardar ajustes</button> <button formaction="/sync">Sincronizar ahora</button></form></div>
-<div class="card"><h2>Estado</h2><div class="grid"><div class="stat"><b>Ejecutándose</b><br>%s</div><div class="stat"><b>Último estado</b><br>%s</div><div class="stat"><b>Encontrados</b><br>%d</div><div class="stat"><b>Actualizados</b><br>%d</div><div class="stat"><b>Errores</b><br>%d</div></div><p class="msg">%s</p><p><a class="btn secondary" href="/health">JSON</a> <a class="btn secondary" href="/history">Historial</a> <a class="btn secondary" href="/history/raw">JSONL</a></p></div>
-</body></html>`, appVersion, cookieStatus, html.EscapeString(s.Settings.Cookie), malStatus, s.Settings.IntervalMinutes, checked(s.Settings.DryRun), checked(s.Settings.OnlyIncrease), checked(s.Settings.AutoSync), runText, html.EscapeString(last), s.Last.Found, s.Last.Updated, s.Last.Errors, html.EscapeString(s.Last.Message))
+<div class="card"><h2>Sincronización</h2><form method="post" action="/settings"><label>Intervalo en minutos</label><input type="number" min="1" name="interval" value="%d"><label><input style="width:auto" type="checkbox" name="dry" %s> Modo simulación (no escribe en MAL)</label><br><label><input style="width:auto" type="checkbox" name="increase" %s> Solo aumentar episodios</label><br><label><input style="width:auto" type="checkbox" name="auto" %s> Sincronización automática</label><br><br><button>Guardar ajustes</button> <button id="syncButton" formaction="/sync">Sincronizar ahora</button></form><div id="progressWrap" class="progress-wrap"><div class="progress-track"><div id="progressBar" class="progress-bar"></div></div><div id="progressLabel" class="progress-label"></div></div></div>
+<div class="card"><h2>Estado</h2><div class="grid"><div class="stat"><b>Ejecutándose</b><br><span id="runningText">%s</span></div><div class="stat"><b>Último estado</b><br><span id="lastStatus">%s</span></div><div class="stat"><b>Encontrados</b><br><span id="found">%d</span></div><div class="stat"><b>Actualizados</b><br><span id="updated">%d</span></div><div class="stat"><b>Errores</b><br><span id="errors">%d</span></div></div><p id="lastMessage" class="msg">%s</p><p><a class="btn secondary" href="/health">JSON</a> <a class="btn secondary" href="/history">Historial</a></p></div>
+<div class="card"><h2>Últimos logs</h2><div id="terminal" class="terminal">%s</div></div>
+<script>
+const initial={running:%t,processed:%d,total:%d,message:%q,trigger:%q,percent:%d};
+function updateProgress(x){const wrap=document.getElementById('progressWrap');const bar=document.getElementById('progressBar');const label=document.getElementById('progressLabel');const manual=x.running&&x.progress_trigger==='manual';wrap.style.display=manual?'block':'none';if(manual){const pct=x.progress_total>0?Math.min(100,Math.floor(x.progress_processed*100/x.progress_total)):0;bar.style.width=pct+'%%';label.textContent=(x.progress_message||'Sincronizando')+' · '+x.progress_processed+'/'+x.progress_total+' ('+pct+'%%)';}}
+async function pollStatus(){try{const r=await fetch('/api/status',{cache:'no-store'});const x=await r.json();document.getElementById('runningText').textContent=x.running?'Sí':'No';document.getElementById('lastStatus').textContent=x.last_status||'Nunca';document.getElementById('found').textContent=x.last?.found??0;document.getElementById('updated').textContent=x.last?.updated??0;document.getElementById('errors').textContent=x.last?.errors??0;document.getElementById('lastMessage').textContent=x.last?.message||'';updateProgress(x);}catch(e){}}
+async function pollLogs(){try{const r=await fetch('/api/logs',{cache:'no-store'});const x=await r.json();const t=document.getElementById('terminal');t.textContent=x.text||'Sin historial';t.scrollTop=0;}catch(e){}}
+updateProgress({running:initial.running,progress_processed:initial.processed,progress_total:initial.total,progress_message:initial.message,progress_trigger:initial.trigger});
+setInterval(pollStatus,1000);setInterval(pollLogs,2000);pollStatus();pollLogs();
+</script></body></html>`, appVersion, cookieStatus, html.EscapeString(s.Settings.Cookie), malStatus, s.Settings.IntervalMinutes, checked(s.Settings.DryRun), checked(s.Settings.OnlyIncrease), checked(s.Settings.AutoSync), runText, html.EscapeString(last), s.Last.Found, s.Last.Updated, s.Last.Errors, html.EscapeString(s.Last.Message), terminal, running, processed, total, progressMessage, progressTrigger, percent)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	io.WriteString(w, page)
 }
+
 func checked(v bool) string {
 	if v {
 		return "checked"
@@ -292,7 +335,7 @@ func (a *App) saveSettings(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 	n, _ := strconv.Atoi(r.FormValue("interval"))
 	if n < 1 {
-		n = 15
+		n = 60
 	}
 	a.mu.Lock()
 	a.state.Settings.IntervalMinutes = n
@@ -823,7 +866,7 @@ func (a *App) syncHandler(w http.ResponseWriter, r *http.Request) {
 func (a *App) saveSettingsNoRedirect(r *http.Request) {
 	n, _ := strconv.Atoi(r.FormValue("interval"))
 	if n < 1 {
-		n = 15
+		n = 60
 	}
 	a.mu.Lock()
 	a.state.Settings.IntervalMinutes = n
@@ -840,6 +883,10 @@ func (a *App) runSync(trigger string) {
 		return
 	}
 	a.running = true
+	a.progressProcessed = 0
+	a.progressTotal = 0
+	a.progressMessage = "Preparando sincronización"
+	a.progressTrigger = trigger
 	cookie := a.state.Settings.Cookie
 	dry := a.state.Settings.DryRun
 	only := a.state.Settings.OnlyIncrease
@@ -866,7 +913,15 @@ func (a *App) runSync(trigger string) {
 	a.save()
 	a.mu.Unlock()
 	last.Found = len(items)
-	for _, it := range items {
+	a.mu.Lock()
+	a.progressTotal = len(items)
+	a.progressMessage = "Procesando biblioteca"
+	a.mu.Unlock()
+	for idx, it := range items {
+		a.mu.Lock()
+		a.progressProcessed = idx + 1
+		a.progressMessage = "Procesando: " + it.Title
+		a.mu.Unlock()
 		anime, matchScore, err := a.resolve(it)
 		if err != nil {
 			last.Errors++
@@ -912,6 +967,8 @@ func (a *App) finish(last LastRun) {
 	a.mu.Lock()
 	a.running = false
 	a.state.Last = last
+	a.progressMessage = last.Message
+	a.progressProcessed = a.progressTotal
 	a.save()
 	a.mu.Unlock()
 	a.appendHistory(last)
@@ -921,7 +978,7 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	ok := a.state.Last.Status != "error" && a.state.Last.Status != "partial"
-	out := map[string]any{"ok": ok, "running": a.running, "last_status": a.state.Last.Status, "last_finished": a.state.Last.Finished, "animeav1_session": a.state.AnimeOK, "mal_authorized": a.state.Token.AccessToken != "", "mal_user": a.state.MALUsername, "dry_run": a.state.Settings.DryRun, "auto_sync": a.state.Settings.AutoSync, "last": a.state.Last}
+	out := map[string]any{"ok": ok, "running": a.running, "progress_processed": a.progressProcessed, "progress_total": a.progressTotal, "progress_message": a.progressMessage, "progress_trigger": a.progressTrigger, "last_status": a.state.Last.Status, "last_finished": a.state.Last.Finished, "animeav1_session": a.state.AnimeOK, "mal_authorized": a.state.Token.AccessToken != "", "mal_user": a.state.MALUsername, "dry_run": a.state.Settings.DryRun, "auto_sync": a.state.Settings.AutoSync, "last": a.state.Last}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
 }
@@ -953,18 +1010,15 @@ func historyUnixTimestamp(line string) int64 {
 	return meta.Started
 }
 
-func (a *App) history(w http.ResponseWriter, r *http.Request) {
+func (a *App) recentHistoryText(limit int) string {
 	b, err := os.ReadFile(filepath.Join(a.dataDir, "history.jsonl"))
 	if err != nil || strings.TrimSpace(string(b)) == "" {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		io.WriteString(w, "Sin historial")
-		return
+		return "Sin historial"
 	}
-
 	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
 	loc := historyLocation()
-	formatted := make([]string, 0, minInt(len(lines), 200))
-	for i := len(lines) - 1; i >= 0 && len(formatted) < 200; i-- {
+	formatted := make([]string, 0, minInt(len(lines), limit))
+	for i := len(lines) - 1; i >= 0 && len(formatted) < limit; i-- {
 		line := strings.TrimSpace(lines[i])
 		if line == "" {
 			continue
@@ -975,9 +1029,17 @@ func (a *App) history(w http.ResponseWriter, r *http.Request) {
 		}
 		formatted = append(formatted, "["+stamp+"] "+line)
 	}
+	return strings.Join(formatted, "\n")
+}
 
+func (a *App) logsAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(w).Encode(map[string]string{"text": a.recentHistoryText(40)})
+}
+
+func (a *App) history(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	io.WriteString(w, strings.Join(formatted, "\n"))
+	io.WriteString(w, a.recentHistoryText(200))
 }
 
 func (a *App) historyRaw(w http.ResponseWriter, r *http.Request) {
