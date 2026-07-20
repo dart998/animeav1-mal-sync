@@ -4,6 +4,21 @@ Aplicación web en Go que lee la biblioteca de AnimeAV1 y sincroniza el progreso
 
 La imagen está preparada para `linux/arm/v7` y se puede ejecutar en un WD My Cloud EX4100 mediante Docker y Portainer Community Edition.
 
+## Cambios de la versión 1.2.1
+
+Esta versión corrige los fallos detectados durante la primera sincronización con caché:
+
+- Limita y simplifica las consultas enviadas al buscador de MAL para evitar `HTTP 400: invalid q` con títulos largos o caracteres especiales.
+- Añade hasta tres intentos para consultas GET que fallen por timeout, HTTP 429 o errores 5xx, con esperas progresivas de 1 y 2 segundos.
+- Compara también el título inglés, japonés y los sinónimos proporcionados por MAL.
+- Rechaza de forma obligatoria coincidencias con temporadas explícitamente diferentes, por ejemplo `2nd Season` frente a `4th Season`.
+- Invalida automáticamente entradas antiguas de caché cuando la temporada de AnimeAV1 no coincide con la temporada almacenada de MAL.
+- Mantiene el umbral de coincidencia configurable y la protección `ONLY_INCREASE`.
+
+Después de actualizar desde la versión 1.2.0 es recomendable pulsar **Eliminar caché** una vez antes de la primera sincronización. Ejecuta primero una simulación con `DRY_RUN=true`, revisa el resultado y solo después activa la escritura real.
+
+> La aplicación no puede revertir automáticamente modificaciones incorrectas que una versión anterior ya haya realizado sobre otra temporada en MAL. Revisa manualmente las entradas afectadas antes de continuar.
+
 ## Funciones principales
 
 - Autorización de MyAnimeList mediante OAuth PKCE.
@@ -76,7 +91,7 @@ Usa siempre una etiqueta fija en producción:
 ```yaml
 services:
   animeav1-mal-sync:
-    image: ovelayos/animeav1-mal-sync:v1.2.0
+    image: ovelayos/animeav1-mal-sync:v1.2.1
     container_name: animeav1-mal-sync
     restart: unless-stopped
     ports:
@@ -152,7 +167,7 @@ Las dos etiquetas apuntan al mismo digest. Las versiones anteriores conservan su
 ## Publicación manual alternativa
 
 ```bash
-VERSION=v1.2.0
+VERSION=v1.2.1
 
 docker buildx build \
   --platform linux/arm/v7 \

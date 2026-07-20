@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	appVersion = "1.2.0"
+	appVersion = "1.2.1"
 	authURL    = "https://myanimelist.net/v1/oauth2/authorize"
 	tokenURL   = "https://myanimelist.net/v1/oauth2/token"
 	apiBase    = "https://api.myanimelist.net/v2"
@@ -121,9 +121,16 @@ type MALSearch struct {
 }
 
 type MALAnime struct {
-	ID           int    `json:"id"`
-	Title        string `json:"title"`
-	NumEpisodes  int    `json:"num_episodes"`
+	ID                int    `json:"id"`
+	Title             string `json:"title"`
+	NumEpisodes       int    `json:"num_episodes"`
+	MediaType         string `json:"media_type"`
+	StartDate         string `json:"start_date"`
+	AlternativeTitles struct {
+		Synonyms []string `json:"synonyms"`
+		English  string   `json:"en"`
+		Japanese string   `json:"ja"`
+	} `json:"alternative_titles"`
 	MyListStatus *struct {
 		Status             string `json:"status"`
 		NumEpisodesWatched int    `json:"num_episodes_watched"`
@@ -157,7 +164,7 @@ func getenvBool(k string, d bool) bool {
 func main() {
 	app := &App{
 		dataDir: getenv("DATA_DIR", "/data"),
-		client:  &http.Client{Timeout: 45 * time.Second},
+		client:  &http.Client{Timeout: 60 * time.Second},
 	}
 	if err := os.MkdirAll(app.dataDir, 0755); err != nil {
 		log.Fatal(err)
@@ -785,32 +792,61 @@ func (a *App) malRequestContext(ctx context.Context, method, path string, vals u
 	a.mu.Lock()
 	tok := a.state.Token.AccessToken
 	a.mu.Unlock()
-	var body io.Reader
-	if vals != nil {
-		body = strings.NewReader(vals.Encode())
+
+	attempts := 1
+	if method == http.MethodGet {
+		attempts = 3
 	}
-	req, err := http.NewRequestWithContext(ctx, method, apiBase+path, body)
-	if err != nil {
-		return err
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		var body io.Reader
+		if vals != nil {
+			body = strings.NewReader(vals.Encode())
+		}
+		req, err := http.NewRequestWithContext(ctx, method, apiBase+path, body)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+		if vals != nil {
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		}
+		resp, err := a.client.Do(req)
+		if err != nil {
+			lastErr = err
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+		} else {
+			b, readErr := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if readErr != nil {
+				lastErr = readErr
+			} else if resp.StatusCode < 300 {
+				if out != nil {
+					return json.Unmarshal(b, out)
+				}
+				return nil
+			} else {
+				lastErr = fmt.Errorf("MAL HTTP %d: %s", resp.StatusCode, string(b))
+				// Los 4xx salvo 429 son errores permanentes y no mejoran al reintentar.
+				if resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
+					return lastErr
+				}
+			}
+		}
+		if attempt < attempts {
+			wait := time.Duration(1<<(attempt-1)) * time.Second
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(wait):
+			}
+		}
 	}
-	req.Header.Set("Authorization", "Bearer "+tok)
-	if vals != nil {
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	}
-	resp, err := a.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	b, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("MAL HTTP %d: %s", resp.StatusCode, string(b))
-	}
-	if out != nil {
-		return json.Unmarshal(b, out)
-	}
-	return nil
+	return lastErr
 }
+
 func (a *App) fetchMALUser() error {
 	var x struct {
 		Name string `json:"name"`
@@ -879,30 +915,129 @@ func candidateTitles(it AVItem) []string {
 	}
 	return out
 }
+
+func animeTitles(anime MALAnime) []string {
+	out := []string{anime.Title, anime.AlternativeTitles.English, anime.AlternativeTitles.Japanese}
+	out = append(out, anime.AlternativeTitles.Synonyms...)
+	return out
+}
+
+func truncateRunes(s string, max int) string {
+	r := []rune(strings.TrimSpace(s))
+	if len(r) <= max {
+		return string(r)
+	}
+	return strings.TrimSpace(string(r[:max]))
+}
+
+func searchQueries(title string) []string {
+	// MAL rechaza q demasiado largos. Se generan variantes de hasta 64 caracteres.
+	clean := strings.TrimSpace(title)
+	clean = strings.ReplaceAll(clean, `"`, " ")
+	clean = regexp.MustCompile(`\s+`).ReplaceAllString(clean, " ")
+	variants := []string{truncateRunes(clean, 64)}
+	if i := strings.IndexAny(clean, ":,-("); i >= 3 {
+		variants = append(variants, truncateRunes(clean[:i], 64))
+	}
+	words := strings.Fields(clean)
+	if len(words) > 6 {
+		variants = append(variants, truncateRunes(strings.Join(words[:6], " "), 64))
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(variants))
+	for _, q := range variants {
+		q = strings.TrimSpace(q)
+		if len([]rune(q)) < 3 || seen[q] {
+			continue
+		}
+		seen[q] = true
+		out = append(out, q)
+	}
+	return out
+}
+
+func romanSeason(s string) int {
+	switch strings.ToUpper(s) {
+	case "I":
+		return 1
+	case "II":
+		return 2
+	case "III":
+		return 3
+	case "IV":
+		return 4
+	case "V":
+		return 5
+	case "VI":
+		return 6
+	}
+	return 0
+}
+
+func seasonNumber(title string) int {
+	n := strings.ToLower(title)
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`\bseason\s*([1-9][0-9]*)\b`),
+		regexp.MustCompile(`\b([1-9][0-9]*)(?:st|nd|rd|th)\s+season\b`),
+	}
+	for _, re := range patterns {
+		if m := re.FindStringSubmatch(n); len(m) == 2 {
+			v, _ := strconv.Atoi(m[1])
+			return v
+		}
+	}
+	// Numeral romano como parte independiente antes de ':' o al final.
+	re := regexp.MustCompile(`(?i)(?:^|\s)(II|III|IV|V|VI)(?:\s*[:\-]|$)`)
+	if m := re.FindStringSubmatch(title); len(m) == 2 {
+		return romanSeason(m[1])
+	}
+	return 0
+}
+
+func seasonMismatch(source, candidate string) bool {
+	a, b := seasonNumber(source), seasonNumber(candidate)
+	return a > 0 && b > 0 && a != b
+}
+
 func (a *App) resolve(ctx context.Context, it AVItem) (MALAnime, int, error) {
 	ids := map[int]string{}
+	var searchErr error
 	for _, title := range candidateTitles(it) {
-		var sr MALSearch
-		if err := a.malRequestContext(ctx, "GET", "/anime?q="+url.QueryEscape(title)+"&limit=10", nil, &sr); err != nil {
-			return MALAnime{}, 0, err
-		}
-		for _, x := range sr.Data {
-			if _, ok := ids[x.Node.ID]; !ok {
-				ids[x.Node.ID] = x.Node.Title
+		for _, query := range searchQueries(title) {
+			var sr MALSearch
+			path := "/anime?q=" + url.QueryEscape(query) + "&limit=10"
+			if err := a.malRequestContext(ctx, "GET", path, nil, &sr); err != nil {
+				searchErr = err
+				continue
+			}
+			for _, x := range sr.Data {
+				if _, ok := ids[x.Node.ID]; !ok {
+					ids[x.Node.ID] = x.Node.Title
+				}
 			}
 		}
+	}
+	if len(ids) == 0 && searchErr != nil {
+		return MALAnime{}, 0, searchErr
 	}
 	bestScore := -1
 	var best MALAnime
 	for id := range ids {
 		var anime MALAnime
-		if err := a.malRequestContext(ctx, "GET", fmt.Sprintf("/anime/%d?fields=id,title,num_episodes,my_list_status", id), nil, &anime); err != nil {
+		fields := "id,title,alternative_titles,num_episodes,media_type,start_date,my_list_status"
+		if err := a.malRequestContext(ctx, "GET", fmt.Sprintf("/anime/%d?fields=%s", id, fields), nil, &anime); err != nil {
+			continue
+		}
+		// Nunca se acepta una temporada explícitamente distinta.
+		if seasonMismatch(it.Title, anime.Title) {
 			continue
 		}
 		titleScore := 0
-		for _, t := range candidateTitles(it) {
-			if sc := similarity(t, anime.Title); sc > titleScore {
-				titleScore = sc
+		for _, sourceTitle := range candidateTitles(it) {
+			for _, malTitle := range animeTitles(anime) {
+				if sc := similarity(sourceTitle, malTitle); sc > titleScore {
+					titleScore = sc
+				}
 			}
 		}
 		score := titleScore
@@ -927,6 +1062,7 @@ func (a *App) resolve(ctx context.Context, it AVItem) (MALAnime, int, error) {
 	}
 	return best, bestScore, nil
 }
+
 func malStatus(s int) string {
 	switch s {
 	case 0:
@@ -1035,7 +1171,7 @@ func animeState(anime MALAnime) (int, string) {
 
 func (a *App) getCachedMAL(ctx context.Context, c CacheEntry) (MALAnime, error) {
 	var anime MALAnime
-	err := a.malRequestContext(ctx, "GET", fmt.Sprintf("/anime/%d?fields=id,title,num_episodes,my_list_status", c.MALID), nil, &anime)
+	err := a.malRequestContext(ctx, "GET", fmt.Sprintf("/anime/%d?fields=id,title,alternative_titles,num_episodes,media_type,start_date,my_list_status", c.MALID), nil, &anime)
 	return anime, err
 }
 
@@ -1114,6 +1250,12 @@ func (a *App) runSync(trigger string) {
 
 		status := malStatus(it.Status)
 		cache, cached := a.cacheGet(it.MediaID)
+		// Las versiones anteriores podían cachear una temporada equivocada.
+		if cached && seasonMismatch(it.Title, cache.MALTitle) {
+			a.cacheDelete(it.MediaID)
+			cache = CacheEntry{}
+			cached = false
+		}
 		fresh := cached && cache.LastValidated > 0 && now.Sub(time.Unix(cache.LastValidated, 0)) < revalidateAfter
 		unchanged := cached && sourceUnchanged(cache, it)
 		desiredCached := desiredFor(it, cache.SourceTotal)
