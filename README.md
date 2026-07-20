@@ -1,22 +1,29 @@
-# AnimeAV1 → MyAnimeList Sync v0.3
+# AnimeAV1 → MyAnimeList Sync v1.0.0
 
-Aplicación única en Go para sincronizar la biblioteca de AnimeAV1 hacia MyAnimeList.
+Versión estable de la aplicación que lee la biblioteca de AnimeAV1 y actualiza únicamente MyAnimeList.
 
-AnimeAV1 se utiliza exclusivamente como origen de datos. La aplicación nunca llama a endpoints de escritura de AnimeAV1.
+AnimeAV1 se utiliza siempre como origen de solo lectura. La aplicación no llama a endpoints de escritura de AnimeAV1.
 
-## Novedades de v0.3
+## Alcance de v1.0.0
 
-- Lectura autenticada por HTTP de `https://animeav1.com/cuenta/listas`.
-- Extracción directa de `libraryEntries` desde los datos iniciales de SvelteKit.
-- Sin Playwright, navegador, Node ni Python en producción.
-- Lectura de título, títulos alternativos, progreso, estado, puntuación, favorito, slug y episodios totales.
-- Matching con MAL mediante título, títulos alternativos y número de episodios.
-- OAuth 2.0 PKCE de MyAnimeList y renovación automática del token.
-- Modo simulación activado por defecto.
-- Sincronización manual y automática configurable.
-- Migración automática desde `/data/state.json`.
-- Configuración persistente en `/data/config/config.json`.
-- Historial en `/data/history.jsonl`.
+Se ha mantenido intacto el flujo que ya funciona:
+
+- lectura autenticada de `https://animeav1.com/cuenta/listas`;
+- extracción de `libraryEntries` desde SvelteKit;
+- OAuth PKCE con MyAnimeList;
+- matching por títulos, alias y episodios;
+- modo simulación;
+- sincronización manual y automática;
+- persistencia en `/data/config/config.json`;
+- historial persistente en `/data/history.jsonl`.
+
+Solo se han incorporado tres correcciones de cierre:
+
+1. **Timestamp legible al principio de cada línea del historial.** El historial visual continúa mostrando primero la entrada más reciente y utiliza por defecto la zona `Europe/Madrid`.
+2. **Estado de AnimeAV1 coherente.** Una sincronización correcta marca automáticamente la sesión como válida; un fallo muestra el motivo real en la pantalla principal.
+3. **Historial JSONL original conservado.** `/history` es la vista legible y `/history/raw` conserva el formato original para exportación o diagnóstico.
+
+No se ha cambiado la arquitectura, el matching ni la lógica de escritura en MAL para evitar introducir riesgo en una aplicación que ya funciona.
 
 ## Construir y publicar
 
@@ -26,50 +33,76 @@ Desde PowerShell, dentro de la carpeta del proyecto:
 docker buildx build --platform linux/arm/v7 -t ovelayos/animeav1-mal-sync:latest --push .
 ```
 
-## Stack de Portainer
+## Despliegue en Portainer
 
-Edita únicamente estas variables en `docker-compose.portainer.yml`:
+El proceso escucha dentro del contenedor en el puerto `8787`.
 
-- `MAL_CLIENT_ID`
-- `MAL_CLIENT_SECRET`, solo si tu aplicación MAL lo requiere
-- `MAL_REDIRECT_URI`
-
-El callback debe coincidir exactamente con el registrado en MyAnimeList:
+Mapeo recomendado:
 
 ```text
-http://IP_DEL_EX4100:8787/oauth/callback
+Host 8787 → Contenedor 8787/TCP
 ```
 
-Después despliega el stack y abre:
+La interfaz quedará disponible en:
 
 ```text
 http://IP_DEL_EX4100:8787
 ```
 
-## Primera ejecución
+No elimines el volumen persistente al actualizar. Así se conservan la cookie, los tokens de MAL, los ajustes y el historial.
 
-1. Pega la cabecera Cookie completa de una sesión abierta en AnimeAV1.
-2. Pulsa **Verificar**. Debe indicar cuántas entradas ha leído.
-3. Conecta MyAnimeList.
-4. Mantén activado **Modo simulación**.
-5. Ejecuta una sincronización manual y revisa el historial.
-6. Desactiva el modo simulación cuando los emparejamientos sean correctos.
+## Variables necesarias
+
+- `MAL_CLIENT_ID`
+- `MAL_CLIENT_SECRET`, únicamente si la aplicación MAL lo requiere
+- `MAL_REDIRECT_URI`, por ejemplo `http://IP_DEL_EX4100:8787/oauth/callback`
+
+## Variables opcionales
+
+- `ANIMEAV1_LIBRARY_URL`: `https://animeav1.com/cuenta/listas`
+- `TITLE_MATCH_THRESHOLD`: `80`
+- `SYNC_INTERVAL_MINUTES`: `15`
+- `DRY_RUN`: `true`
+- `ONLY_INCREASE`: `true`
+- `AUTO_SYNC`: `false`
+- `LOG_TIMEZONE`: `Europe/Madrid`
+- `DATA_DIR`: `/data`
+- `LISTEN_ADDR`: `:8787`
+
+## Historial
+
+Vista legible, ordenada de más reciente a más antiguo:
+
+```text
+http://IP_DEL_EX4100:8787/history
+```
+
+Ejemplo:
+
+```text
+[2026-07-20 22:49:56 CEST] {"animeav1_media_id":257,"dry_run":true,...}
+```
+
+JSONL original, sin transformación:
+
+```text
+http://IP_DEL_EX4100:8787/history/raw
+```
+
+## Primera sincronización real
+
+1. Guarda y verifica la cookie completa de AnimeAV1.
+2. Conecta MyAnimeList.
+3. Ejecuta primero una sincronización con **Modo simulación** activado.
+4. Revisa `/history`.
+5. Desactiva el modo simulación únicamente cuando los emparejamientos sean correctos.
 
 ## Estados AnimeAV1 utilizados
 
-| AnimeAV1 | MAL |
+| AnimeAV1 | MyAnimeList |
 |---:|---|
 | 0 | watching |
 | 1 | plan_to_watch |
 | 2 | completed |
 | 3 | on_hold |
 | 4 | dropped |
-
-## Variables opcionales
-
-- `ANIMEAV1_LIBRARY_URL`: por defecto `https://animeav1.com/cuenta/listas`
-- `TITLE_MATCH_THRESHOLD`: por defecto `80`
-- `SYNC_INTERVAL_MINUTES`: por defecto `15`
-- `DRY_RUN`: por defecto `true`
-- `ONLY_INCREASE`: por defecto `true`
-- `AUTO_SYNC`: por defecto `false`

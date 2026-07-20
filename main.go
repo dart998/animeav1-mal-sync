@@ -15,17 +15,18 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	_ "time/tzdata"
 )
 
 const (
-	authURL  = "https://myanimelist.net/v1/oauth2/authorize"
-	tokenURL = "https://myanimelist.net/v1/oauth2/token"
-	apiBase  = "https://api.myanimelist.net/v2"
+	appVersion = "1.0.0"
+	authURL    = "https://myanimelist.net/v1/oauth2/authorize"
+	tokenURL   = "https://myanimelist.net/v1/oauth2/token"
+	apiBase    = "https://api.myanimelist.net/v2"
 )
 
 type Token struct {
@@ -153,6 +154,7 @@ func main() {
 	mux.HandleFunc("/oauth/callback", app.oauthCallback)
 	mux.HandleFunc("/oauth/disconnect", app.oauthDisconnect)
 	mux.HandleFunc("/history", app.history)
+	mux.HandleFunc("/history/raw", app.historyRaw)
 
 	go app.scheduler()
 	addr := getenv("LISTEN_ADDR", ":8787")
@@ -224,9 +226,12 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 	cookieStatus := "❌ Sin configurar"
 	if s.Settings.Cookie != "" {
 		cookieStatus = "⚠️ Guardada, sin verificar"
+		if s.AnimeMessage != "" && s.AnimeMessage != "Pendiente de verificar" {
+			cookieStatus = "❌ " + html.EscapeString(s.AnimeMessage)
+		}
 	}
 	if s.AnimeOK {
-		cookieStatus = "✅ " + s.AnimeMessage
+		cookieStatus = "✅ " + html.EscapeString(s.AnimeMessage)
 	}
 	malStatus := "❌ No autorizado"
 	if s.Token.AccessToken != "" {
@@ -245,12 +250,12 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	page := fmt.Sprintf(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>AnimeAV1 → MAL</title><style>
 body{font-family:Arial,sans-serif;background:#111827;color:#e5e7eb;max-width:900px;margin:30px auto;padding:0 16px}h1{margin-bottom:8px}.card{background:#1f2937;border-radius:12px;padding:20px;margin:16px 0}input,textarea{width:100%%;box-sizing:border-box;background:#111827;color:#fff;border:1px solid #4b5563;border-radius:8px;padding:10px;margin:6px 0 12px}button,.btn{display:inline-block;background:#14b8a6;color:#041311;border:0;border-radius:8px;padding:10px 15px;font-weight:bold;text-decoration:none;cursor:pointer}.secondary{background:#374151;color:#fff}.danger{background:#ef4444;color:#fff}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}.stat{background:#111827;padding:12px;border-radius:8px}.muted{color:#9ca3af}.msg{white-space:pre-wrap;word-break:break-word}</style></head><body>
-<h1>AnimeAV1 → MyAnimeList</h1><div class="muted">v0.3 · EX4100 ARMv7 · lectura SvelteKit por HTTP</div>
+<h1>AnimeAV1 → MyAnimeList</h1><div class="muted">v%s · EX4100 ARMv7 · lectura SvelteKit por HTTP</div>
 <div class="card"><h2>AnimeAV1</h2><p>%s</p><form method="post" action="/cookie"><label>Cookie completa del navegador</label><textarea name="cookie" rows="3" placeholder="session=...; otra_cookie=...">%s</textarea><button>Guardar cookie</button> <a class="btn secondary" href="/check">Verificar</a></form><p class="muted">Pega el contenido completo de la cabecera Cookie. Se guarda únicamente en /data/config/config.json.</p></div>
 <div class="card"><h2>MyAnimeList</h2><p>%s</p><a class="btn" href="/oauth/start">Conectar con MAL</a> <a class="btn danger" href="/oauth/disconnect">Desconectar</a></div>
 <div class="card"><h2>Sincronización</h2><form method="post" action="/settings"><label>Intervalo en minutos</label><input type="number" min="1" name="interval" value="%d"><label><input style="width:auto" type="checkbox" name="dry" %s> Modo simulación (no escribe en MAL)</label><br><label><input style="width:auto" type="checkbox" name="increase" %s> Solo aumentar episodios</label><br><label><input style="width:auto" type="checkbox" name="auto" %s> Sincronización automática</label><br><br><button>Guardar ajustes</button> <button formaction="/sync">Sincronizar ahora</button></form></div>
-<div class="card"><h2>Estado</h2><div class="grid"><div class="stat"><b>Ejecutándose</b><br>%s</div><div class="stat"><b>Último estado</b><br>%s</div><div class="stat"><b>Encontrados</b><br>%d</div><div class="stat"><b>Actualizados</b><br>%d</div><div class="stat"><b>Errores</b><br>%d</div></div><p class="msg">%s</p><p><a class="btn secondary" href="/health">JSON</a> <a class="btn secondary" href="/history">Historial</a></p></div>
-</body></html>`, cookieStatus, html.EscapeString(s.Settings.Cookie), malStatus, s.Settings.IntervalMinutes, checked(s.Settings.DryRun), checked(s.Settings.OnlyIncrease), checked(s.Settings.AutoSync), runText, html.EscapeString(last), s.Last.Found, s.Last.Updated, s.Last.Errors, html.EscapeString(s.Last.Message))
+<div class="card"><h2>Estado</h2><div class="grid"><div class="stat"><b>Ejecutándose</b><br>%s</div><div class="stat"><b>Último estado</b><br>%s</div><div class="stat"><b>Encontrados</b><br>%d</div><div class="stat"><b>Actualizados</b><br>%d</div><div class="stat"><b>Errores</b><br>%d</div></div><p class="msg">%s</p><p><a class="btn secondary" href="/health">JSON</a> <a class="btn secondary" href="/history">Historial</a> <a class="btn secondary" href="/history/raw">JSONL</a></p></div>
+</body></html>`, appVersion, cookieStatus, html.EscapeString(s.Settings.Cookie), malStatus, s.Settings.IntervalMinutes, checked(s.Settings.DryRun), checked(s.Settings.OnlyIncrease), checked(s.Settings.AutoSync), runText, html.EscapeString(last), s.Last.Found, s.Last.Updated, s.Last.Errors, html.EscapeString(s.Last.Message))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	io.WriteString(w, page)
 }
@@ -844,12 +849,22 @@ func (a *App) runSync(trigger string) {
 	last := LastRun{Status: "ok", Started: time.Now().Unix()}
 	items, err := a.scrape(cookie)
 	if err != nil {
+		a.mu.Lock()
+		a.state.AnimeOK = false
+		a.state.AnimeMessage = err.Error()
+		a.save()
+		a.mu.Unlock()
 		last.Status = "error"
 		last.Errors = 1
 		last.Message = err.Error()
 		a.finish(last)
 		return
 	}
+	a.mu.Lock()
+	a.state.AnimeOK = true
+	a.state.AnimeMessage = fmt.Sprintf("Sesión válida · %d entradas leídas", len(items))
+	a.save()
+	a.mu.Unlock()
 	last.Found = len(items)
 	for _, it := range items {
 		anime, matchScore, err := a.resolve(it)
@@ -910,16 +925,73 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
 }
+func historyLocation() *time.Location {
+	name := getenv("LOG_TIMEZONE", "Europe/Madrid")
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		log.Printf("zona horaria %q no disponible; se usará UTC: %v", name, err)
+		return time.UTC
+	}
+	return loc
+}
+
+func historyUnixTimestamp(line string) int64 {
+	var meta struct {
+		TS       int64 `json:"ts"`
+		Started  int64 `json:"started"`
+		Finished int64 `json:"finished"`
+	}
+	if json.Unmarshal([]byte(line), &meta) != nil {
+		return 0
+	}
+	if meta.TS > 0 {
+		return meta.TS
+	}
+	if meta.Finished > 0 {
+		return meta.Finished
+	}
+	return meta.Started
+}
+
 func (a *App) history(w http.ResponseWriter, r *http.Request) {
+	b, err := os.ReadFile(filepath.Join(a.dataDir, "history.jsonl"))
+	if err != nil || strings.TrimSpace(string(b)) == "" {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		io.WriteString(w, "Sin historial")
+		return
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	loc := historyLocation()
+	formatted := make([]string, 0, minInt(len(lines), 200))
+	for i := len(lines) - 1; i >= 0 && len(formatted) < 200; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		stamp := "sin fecha"
+		if unix := historyUnixTimestamp(line); unix > 0 {
+			stamp = time.Unix(unix, 0).In(loc).Format("2006-01-02 15:04:05 MST")
+		}
+		formatted = append(formatted, "["+stamp+"] "+line)
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	io.WriteString(w, strings.Join(formatted, "\n"))
+}
+
+func (a *App) historyRaw(w http.ResponseWriter, r *http.Request) {
 	b, err := os.ReadFile(filepath.Join(a.dataDir, "history.jsonl"))
 	if err != nil {
 		b = []byte("Sin historial")
 	}
-	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
-	sort.SliceStable(lines, func(i, j int) bool { return i > j })
-	if len(lines) > 200 {
-		lines = lines[:200]
+	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
+	w.Write(b)
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
 	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	io.WriteString(w, strings.Join(lines, "\n"))
+	return b
 }
