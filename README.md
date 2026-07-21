@@ -1,3 +1,15 @@
+# AnimeAV1 → MyAnimeList Sync v1.5.0
+
+## Cambios principales
+
+- Searcher multiconsulta: título completo, sin puntuación, base y recortes progresivos.
+- Hasta 100 resultados por consulta de MAL, fusionados y deduplicados antes de puntuar.
+- `aliases.json` compatible con formato clásico y enriquecido (`search`/`preferred`).
+- Caché versionada por motor de matching; las entradas antiguas se revalidan automáticamente.
+- Diagnósticos distintos para «sin candidatos» y «ningún candidato supera el umbral».
+- Se mantiene la separación estricta entre `Season 2` y `Part 2`; el soporte 1→N queda preparado pero no escribe todavía en dos fichas MAL.
+- `release.sh` reutiliza las credenciales guardadas por Docker Desktop y no fuerza `docker login`.
+
 # AnimeAV1 → MyAnimeList Sync
 
 

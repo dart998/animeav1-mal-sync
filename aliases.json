@@ -1,7 +1,8 @@
 {
-  "Temple": ["TenPuru", "TenPuru: No One Can Live on Loneliness"],
-  "Mahou Shoujo ni Akogarete": ["Gushing over Magical Girls"],
-  "Futoku no Guild": ["Immoral Guild"],
-  "Mayo Chiki!": ["Mayo Chiki"],
-  "Seikon no Qwaser": ["The Qwaser of Stigmata"]
+  "Temple": {"search": ["Temple", "TenPuru", "TenPuru: No One Can Live on Loneliness"], "preferred": "TenPuru"},
+  "Mahou Shoujo ni Akogarete": {"search": ["Mahou Shoujo ni Akogarete", "Gushing over Magical Girls"], "preferred": "Mahou Shoujo ni Akogarete"},
+  "Futoku no Guild": {"search": ["Futoku no Guild", "Immoral Guild"], "preferred": "Futoku no Guild"},
+  "Mayo Chiki!": {"search": ["Mayo Chiki!", "Mayo Chiki"], "preferred": "Mayo Chiki!"},
+  "Seikon no Qwaser": {"search": ["Seikon no Qwaser", "The Qwaser of Stigmata"], "preferred": "Seikon no Qwaser"},
+  "S-Rank Monster no Behemoth dakedo, Neko to Machigawarete Elf Musume no Pet toshite Kurashitemasu": {"search": ["Beheneko", "Behemoth S-Ranked Monster"], "preferred": "S-Rank Monster no Behemoth dakedo"}
 }

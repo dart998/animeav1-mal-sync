@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	appVersion = "1.4.2"
+	appVersion = "1.5.0"
 	authURL    = "https://myanimelist.net/v1/oauth2/authorize"
 	tokenURL   = "https://myanimelist.net/v1/oauth2/token"
 	apiBase    = "https://api.myanimelist.net/v2"
@@ -100,18 +100,20 @@ type App struct {
 }
 
 type CacheEntry struct {
-	MediaID       int    `json:"media_id"`
-	MALID         int    `json:"mal_id"`
-	MALTitle      string `json:"mal_title"`
-	MatchScore    int    `json:"match_score"`
-	SourceTitle   string `json:"source_title"`
-	SourceSeen    int    `json:"source_seen"`
-	SourceStatus  int    `json:"source_status"`
-	SourceTotal   int    `json:"source_total"`
-	MALSeen       int    `json:"mal_seen"`
-	MALStatus     string `json:"mal_status"`
-	LastValidated int64  `json:"last_validated"`
-	UpdatedAt     int64  `json:"updated_at"`
+	MediaID        int    `json:"media_id"`
+	MALID          int    `json:"mal_id"`
+	MALTitle       string `json:"mal_title"`
+	MatchScore     int    `json:"match_score"`
+	SourceTitle    string `json:"source_title"`
+	SourceSeen     int    `json:"source_seen"`
+	SourceStatus   int    `json:"source_status"`
+	SourceTotal    int    `json:"source_total"`
+	MALSeen        int    `json:"mal_seen"`
+	MALStatus      string `json:"mal_status"`
+	LastValidated  int64  `json:"last_validated"`
+	UpdatedAt      int64  `json:"updated_at"`
+	MatcherVersion string `json:"matcher_version,omitempty"`
+	SearchStrategy string `json:"search_strategy,omitempty"`
 }
 
 type AVItem struct {
@@ -279,6 +281,7 @@ func (a *App) ensureDefaultAliases() {
 		"Futoku no Guild":           {"Immoral Guild"},
 		"Mayo Chiki!":               {"Mayo Chiki"},
 		"Seikon no Qwaser":          {"The Qwaser of Stigmata"},
+		"S-Rank Monster no Behemoth dakedo, Neko to Machigawarete Elf Musume no Pet toshite Kurashitemasu": {"Beheneko", "Behemoth S-Ranked Monster"},
 	}
 	b, _ := json.MarshalIndent(defaults, "", "  ")
 	_ = os.WriteFile(path, append(b, '\n'), 0600)
@@ -947,20 +950,37 @@ func (a *App) candidateTitles(it AVItem) []string {
 		n := normalize(v)
 		if n != "" && !seen[n] {
 			seen[n] = true
-			out = append(out, v)
+			out = append(out, strings.TrimSpace(v))
 		}
 	}
 	for _, v := range it.Aliases {
 		add(v)
 	}
-	// aliases.json es opcional y solo amplía búsquedas; nunca fuerza una aceptación insegura.
+
+	// Compatible con el formato clásico {"Título":["alias"]} y con el formato
+	// enriquecido {"Título":{"search":[...],"preferred":"..."}}.
 	b, err := os.ReadFile(filepath.Join(a.dataDir, "aliases.json"))
 	if err == nil {
-		var aliases map[string][]string
-		if json.Unmarshal(b, &aliases) == nil {
-			for key, values := range aliases {
-				if normalize(key) == normalize(it.Title) {
-					for _, v := range values {
+		var raw map[string]json.RawMessage
+		if json.Unmarshal(b, &raw) == nil {
+			for key, value := range raw {
+				if normalize(key) != normalize(it.Title) {
+					continue
+				}
+				var simple []string
+				if json.Unmarshal(value, &simple) == nil {
+					for _, v := range simple {
+						add(v)
+					}
+					continue
+				}
+				var rich struct {
+					Search    []string `json:"search"`
+					Preferred string   `json:"preferred"`
+				}
+				if json.Unmarshal(value, &rich) == nil {
+					add(rich.Preferred)
+					for _, v := range rich.Search {
 						add(v)
 					}
 				}
@@ -985,19 +1005,26 @@ func truncateRunes(s string, max int) string {
 }
 
 func searchQueries(title string) []string {
-	// La consulta principal usa el título base, pero también se conserva el título
-	// completo. El orden de MAL nunca se considera una prueba de coincidencia.
 	clean := strings.TrimSpace(title)
 	clean = strings.ReplaceAll(clean, `"`, " ")
 	clean = regexp.MustCompile(`\s+`).ReplaceAllString(clean, " ")
+	punctuationFree := regexp.MustCompile(`[^\p{L}\p{N}]+`).ReplaceAllString(clean, " ")
+	punctuationFree = regexp.MustCompile(`\s+`).ReplaceAllString(strings.TrimSpace(punctuationFree), " ")
 	base := strings.TrimSpace(baseTitleDisplay(clean))
-	variants := []string{truncateRunes(base, 64), truncateRunes(clean, 64)}
-	if i := strings.IndexAny(base, ":,-("); i >= 3 {
-		variants = append(variants, truncateRunes(base[:i], 64))
+
+	variants := []string{
+		truncateRunes(clean, 64),
+		truncateRunes(punctuationFree, 64),
+		truncateRunes(base, 64),
 	}
-	words := strings.Fields(base)
-	if len(words) > 6 {
-		variants = append(variants, truncateRunes(strings.Join(words[:6], " "), 64))
+	if i := strings.IndexAny(clean, ":,-("); i >= 3 {
+		variants = append(variants, truncateRunes(clean[:i], 64))
+	}
+	words := strings.Fields(clean)
+	for _, n := range []int{10, 8, 6, 4} {
+		if len(words) > n {
+			variants = append(variants, truncateRunes(strings.Join(words[:n], " "), 64))
+		}
 	}
 	seen := map[string]bool{}
 	out := make([]string, 0, len(variants))
@@ -1231,7 +1258,7 @@ func (a *App) resolve(ctx context.Context, it AVItem) (MALAnime, int, error) {
 		}
 		for _, query := range searchQueries(title) {
 			var sr MALSearch
-			path := "/anime?q=" + url.QueryEscape(query) + "&limit=10"
+			path := "/anime?q=" + url.QueryEscape(query) + "&limit=100"
 			if err := a.malRequestContext(ctx, "GET", path, nil, &sr); err != nil {
 				searchErr = err
 				continue
@@ -1295,7 +1322,10 @@ func (a *App) resolve(ctx context.Context, it AVItem) (MALAnime, int, error) {
 	}
 	threshold := getenvInt("TITLE_MATCH_THRESHOLD", 88)
 	if best.ID == 0 || bestScore < threshold {
-		return MALAnime{}, bestScore, fmt.Errorf("sin coincidencia segura (%d puntos)", bestScore)
+		if len(ids) == 0 {
+			return MALAnime{}, -1, fmt.Errorf("sin candidatos devueltos por MAL")
+		}
+		return MALAnime{}, bestScore, fmt.Errorf("candidatos encontrados, pero ninguno superó el umbral (%d puntos)", bestScore)
 	}
 	return best, bestScore, nil
 }
@@ -1497,7 +1527,7 @@ func (a *App) runSync(trigger string) {
 				cached = false
 			}
 		}
-		fresh := cached && cache.LastValidated > 0 && now.Sub(time.Unix(cache.LastValidated, 0)) < revalidateAfter
+		fresh := cached && cache.MatcherVersion == appVersion && cache.LastValidated > 0 && now.Sub(time.Unix(cache.LastValidated, 0)) < revalidateAfter
 		unchanged := cached && sourceUnchanged(cache, it)
 		desiredCached := desiredFor(it, cache.SourceTotal)
 		cacheAlreadyCorrect := cache.MALSeen == desiredCached && cache.MALStatus == status
@@ -1771,7 +1801,7 @@ func (a *App) inspectCandidates(ctx context.Context, it AVItem) ([]candidateDebu
 	for _, title := range a.candidateTitles(it) {
 		for _, query := range searchQueries(title) {
 			var sr MALSearch
-			if err := a.malRequestContext(ctx, "GET", "/anime?q="+url.QueryEscape(query)+"&limit=10", nil, &sr); err != nil {
+			if err := a.malRequestContext(ctx, "GET", "/anime?q="+url.QueryEscape(query)+"&limit=100", nil, &sr); err != nil {
 				lastErr = err
 				continue
 			}
@@ -1867,6 +1897,8 @@ func (a *App) recomputeCacheEntryAPI(w http.ResponseWriter, r *http.Request) {
 	entry.MALStatus = status
 	entry.LastValidated = time.Now().Unix()
 	entry.UpdatedAt = time.Now().Unix()
+	entry.MatcherVersion = appVersion
+	entry.SearchStrategy = "multi_query"
 	a.cachePut(entry)
 	a.appendHistory(map[string]any{"ts": time.Now().Unix(), "event": "cache_entry_recomputed", "media_id": mediaID, "source_title": entry.SourceTitle, "mal_id": entry.MALID, "mal_title": entry.MALTitle, "message": "Coincidencia recalculada manualmente"})
 	json.NewEncoder(w).Encode(map[string]any{"ok": true, "entry": entry})
