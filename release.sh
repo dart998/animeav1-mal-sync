@@ -26,12 +26,12 @@ if [ -f VERSION ]; then
   CURRENT_VERSION="v$(tr -d '[:space:]' < VERSION | sed 's/^v//')"
 fi
 
-read -r -p "Versión${CURRENT_VERSION:+ [$CURRENT_VERSION]} (ej. v1.3.0): " VERSION
+read -r -p "Versión${CURRENT_VERSION:+ [$CURRENT_VERSION]} (ej. v1.4.0): " VERSION
 VERSION="${VERSION:-$CURRENT_VERSION}"
 VERSION="v${VERSION#v}"
 
 [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || \
-  fail "Versión no válida. Usa un formato como v1.3.0."
+  fail "Versión no válida. Usa un formato como v1.4.0."
 
 read -r -p "Rama de Git [$DEFAULT_BRANCH]: " BRANCH
 BRANCH="${BRANCH:-$DEFAULT_BRANCH}"

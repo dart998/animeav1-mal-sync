@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	appVersion = "1.3.0"
+	appVersion = "1.4.0"
 	authURL    = "https://myanimelist.net/v1/oauth2/authorize"
 	tokenURL   = "https://myanimelist.net/v1/oauth2/token"
 	apiBase    = "https://api.myanimelist.net/v2"
@@ -944,15 +944,17 @@ func truncateRunes(s string, max int) string {
 }
 
 func searchQueries(title string) []string {
-	// MAL rechaza q demasiado largos. Se generan variantes de hasta 64 caracteres.
+	// La consulta principal usa el título base, pero también se conserva el título
+	// completo. El orden de MAL nunca se considera una prueba de coincidencia.
 	clean := strings.TrimSpace(title)
 	clean = strings.ReplaceAll(clean, `"`, " ")
 	clean = regexp.MustCompile(`\s+`).ReplaceAllString(clean, " ")
-	variants := []string{truncateRunes(clean, 64)}
-	if i := strings.IndexAny(clean, ":,-("); i >= 3 {
-		variants = append(variants, truncateRunes(clean[:i], 64))
+	base := strings.TrimSpace(baseTitleDisplay(clean))
+	variants := []string{truncateRunes(base, 64), truncateRunes(clean, 64)}
+	if i := strings.IndexAny(base, ":,-("); i >= 3 {
+		variants = append(variants, truncateRunes(base[:i], 64))
 	}
-	words := strings.Fields(clean)
+	words := strings.Fields(base)
 	if len(words) > 6 {
 		variants = append(variants, truncateRunes(strings.Join(words[:6], " "), 64))
 	}
@@ -960,10 +962,11 @@ func searchQueries(title string) []string {
 	out := make([]string, 0, len(variants))
 	for _, q := range variants {
 		q = strings.TrimSpace(q)
-		if len([]rune(q)) < 3 || seen[q] {
+		key := normalize(q)
+		if len([]rune(key)) < 3 || seen[key] {
 			continue
 		}
-		seen[q] = true
+		seen[key] = true
 		out = append(out, q)
 	}
 	return out
@@ -983,12 +986,20 @@ func romanSeason(s string) int {
 		return 5
 	case "VI":
 		return 6
+	case "VII":
+		return 7
+	case "VIII":
+		return 8
+	case "IX":
+		return 9
+	case "X":
+		return 10
 	}
 	return 0
 }
 
 func seasonNumber(title string) int {
-	n := strings.ToLower(title)
+	n := strings.TrimSpace(strings.ToLower(title))
 	patterns := []*regexp.Regexp{
 		regexp.MustCompile(`\bseason\s*([1-9][0-9]*)\b`),
 		regexp.MustCompile(`\b([1-9][0-9]*)(?:st|nd|rd|th)\s+season\b`),
@@ -999,10 +1010,14 @@ func seasonNumber(title string) int {
 			return v
 		}
 	}
-	// Numeral romano como parte independiente antes de ':' o al final.
-	re := regexp.MustCompile(`(?i)(?:^|\s)(II|III|IV|V|VI)(?:\s*[:\-]|$)`)
-	if m := re.FindStringSubmatch(title); len(m) == 2 {
+	// Numeral romano al final o antes de un separador.
+	if m := regexp.MustCompile(`(?i)(?:^|\s)(II|III|IV|V|VI|VII|VIII|IX|X)(?:\s*[:\-]|$)`).FindStringSubmatch(title); len(m) == 2 {
 		return romanSeason(m[1])
+	}
+	// Número arábigo final: formato habitual de secuelas en MAL/AnimeAV1.
+	if m := regexp.MustCompile(`(?:^|\s)([2-9]|[1-9][0-9])\s*$`).FindStringSubmatch(n); len(m) == 2 {
+		v, _ := strconv.Atoi(m[1])
+		return v
 	}
 	return 0
 }
@@ -1012,17 +1027,58 @@ func seasonMismatch(source, candidate string) bool {
 	return a > 0 && b > 0 && a != b
 }
 
-func baseTitle(title string) string {
-	s := strings.ToLower(title)
+func baseTitleDisplay(title string) string {
+	s := strings.TrimSpace(title)
 	patterns := []string{
-		`\bseason\s*[1-9][0-9]*\b`, `\b[1-9][0-9]*(?:st|nd|rd|th)\s+season\b`,
-		`\bpart\s*[1-9][0-9]*\b`, `\b[1-9][0-9]*\s*(?:st|nd|rd|th)?\s*part\b`,
+		`(?i)\bseason\s*[1-9][0-9]*\b`, `(?i)\b[1-9][0-9]*(?:st|nd|rd|th)\s+season\b`,
+		`(?i)\bpart\s*[1-9][0-9]*\b`, `(?i)\b[1-9][0-9]*\s*(?:st|nd|rd|th)?\s*part\b`,
+		`(?i)(?:^|\s)(II|III|IV|V|VI|VII|VIII|IX|X)(?:\s*[:\-]|$)`,
+		`(?i)(?:^|\s)([2-9]|[1-9][0-9])\s*$`,
 	}
 	for _, pattern := range patterns {
 		s = regexp.MustCompile(pattern).ReplaceAllString(s, " ")
 	}
-	s = regexp.MustCompile(`(?i)(?:^|\s)(II|III|IV|V|VI)(?:\s*[:\-]|$)`).ReplaceAllString(s, " ")
-	return normalize(s)
+	return strings.TrimSpace(regexp.MustCompile(`\s+`).ReplaceAllString(s, " "))
+}
+
+func baseTitle(title string) string { return normalize(baseTitleDisplay(title)) }
+
+func isGenericTitle(title string) bool {
+	n := baseTitle(title)
+	if n == "" {
+		return true
+	}
+	generic := map[string]bool{
+		"season": true, "second season": true, "third season": true,
+		"movie": true, "special": true, "ova": true, "ona": true,
+		"part": true, "tv": true,
+	}
+	if generic[n] {
+		return true
+	}
+	return len([]rune(n)) < 4
+}
+
+func tokenOverlap(a, b string) int {
+	aa, bb := strings.Fields(baseTitle(a)), strings.Fields(baseTitle(b))
+	if len(aa) == 0 || len(bb) == 0 {
+		return 0
+	}
+	set := map[string]bool{}
+	for _, x := range aa {
+		set[x] = true
+	}
+	common := 0
+	for _, x := range bb {
+		if set[x] {
+			common++
+		}
+	}
+	den := len(aa)
+	if len(bb) < den {
+		den = len(bb)
+	}
+	return common * 100 / den
 }
 
 func variantPenalty(source, candidate string) int {
@@ -1042,10 +1098,68 @@ func variantPenalty(source, candidate string) int {
 	return penalty
 }
 
+type titleMatch struct {
+	score     int
+	baseScore int
+	source    string
+	candidate string
+}
+
+func evaluateTitlePair(source, candidate string, primary bool) (titleMatch, bool) {
+	if isGenericTitle(source) || isGenericTitle(candidate) {
+		return titleMatch{}, false
+	}
+	if seasonMismatch(source, candidate) {
+		return titleMatch{}, false
+	}
+	sn, cn := seasonNumber(source), seasonNumber(candidate)
+	fullExact := normalize(source) == normalize(candidate)
+	baseExact := baseTitle(source) == baseTitle(candidate)
+	// Una secuela explícita nunca puede emparejarse con una entrada sin temporada,
+	// salvo que el título completo sea idéntico.
+	if !fullExact && sn > 1 && cn == 0 {
+		return titleMatch{}, false
+	}
+	if fullExact {
+		return titleMatch{score: 120 - variantPenalty(source, candidate), baseScore: 100, source: source, candidate: candidate}, true
+	}
+	if baseExact {
+		score := 108 - variantPenalty(source, candidate)
+		if sn > 0 && sn == cn {
+			score += 4
+		}
+		return titleMatch{score: score, baseScore: 100, source: source, candidate: candidate}, score >= 90
+	}
+	baseScore := similarity(baseTitle(source), baseTitle(candidate))
+	overlap := tokenOverlap(source, candidate)
+	minBase := getenvInt("BASE_TITLE_MATCH_THRESHOLD", 88)
+	if !primary {
+		minBase = maxInt(minBase, 94)
+	}
+	if baseScore < minBase || overlap < 60 {
+		return titleMatch{}, false
+	}
+	score := baseScore - variantPenalty(source, candidate)
+	if sn > 0 && sn == cn {
+		score += 3
+	}
+	return titleMatch{score: score, baseScore: baseScore, source: source, candidate: candidate}, score >= getenvInt("TITLE_MATCH_THRESHOLD", 88)
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 func (a *App) resolve(ctx context.Context, it AVItem) (MALAnime, int, error) {
 	ids := map[int]string{}
 	var searchErr error
 	for _, title := range candidateTitles(it) {
+		if isGenericTitle(title) {
+			continue
+		}
 		for _, query := range searchQueries(title) {
 			var sr MALSearch
 			path := "/anime?q=" + url.QueryEscape(query) + "&limit=10"
@@ -1064,51 +1178,47 @@ func (a *App) resolve(ctx context.Context, it AVItem) (MALAnime, int, error) {
 	bestScore := -1
 	bestBase := -1
 	var best MALAnime
+	sources := candidateTitles(it)
 	for id := range ids {
 		var anime MALAnime
 		fields := "id,title,alternative_titles,num_episodes,media_type,start_date,my_list_status"
 		if err := a.malRequestContext(ctx, "GET", fmt.Sprintf("/anime/%d?fields=%s", id, fields), nil, &anime); err != nil {
 			continue
 		}
-		if seasonMismatch(it.Title, anime.Title) {
-			continue
-		}
-		titleScore, baseScore := 0, 0
-		for _, sourceTitle := range candidateTitles(it) {
+		var tm titleMatch
+		matched := false
+		for si, sourceTitle := range sources {
+			if isGenericTitle(sourceTitle) {
+				continue
+			}
 			for _, malTitle := range animeTitles(anime) {
-				if sc := similarity(sourceTitle, malTitle); sc > titleScore {
-					titleScore = sc
-				}
-				if sc := similarity(baseTitle(sourceTitle), baseTitle(malTitle)); sc > baseScore {
-					baseScore = sc
+				m, ok := evaluateTitlePair(sourceTitle, malTitle, si == 0)
+				if ok && (!matched || m.score > tm.score || (m.score == tm.score && m.baseScore > tm.baseScore)) {
+					tm, matched = m, true
 				}
 			}
 		}
-		// El número de temporada nunca puede rescatar títulos base distintos.
-		if baseScore < getenvInt("BASE_TITLE_MATCH_THRESHOLD", 72) {
+		if !matched {
 			continue
 		}
-		score := titleScore - variantPenalty(it.Title, anime.Title)
-		if seasonNumber(it.Title) > 0 && seasonNumber(anime.Title) == seasonNumber(it.Title) {
-			score += 4
-		}
+		score := tm.score
 		if it.Total > 0 && anime.NumEpisodes > 0 {
 			d := int(math.Abs(float64(it.Total - anime.NumEpisodes)))
 			if d == 0 {
-				score += 6
+				score += 4
 			} else if d <= 2 {
-				score += 2
+				score += 1
 			} else if d > 5 {
-				score -= 10
+				score -= 8
 			}
 		}
-		if score > bestScore || (score == bestScore && baseScore > bestBase) {
-			bestScore, bestBase, best = score, baseScore, anime
+		if score > bestScore || (score == bestScore && tm.baseScore > bestBase) {
+			bestScore, bestBase, best = score, tm.baseScore, anime
 		}
 	}
-	threshold := getenvInt("TITLE_MATCH_THRESHOLD", 82)
+	threshold := getenvInt("TITLE_MATCH_THRESHOLD", 88)
 	if best.ID == 0 || bestScore < threshold {
-		return MALAnime{}, bestScore, fmt.Errorf("sin coincidencia suficiente (%d puntos)", bestScore)
+		return MALAnime{}, bestScore, fmt.Errorf("sin coincidencia segura (%d puntos)", bestScore)
 	}
 	return best, bestScore, nil
 }
@@ -1300,11 +1410,15 @@ func (a *App) runSync(trigger string) {
 
 		status := malStatus(it.Status)
 		cache, cached := a.cacheGet(it.MediaID)
-		// Las versiones anteriores podían cachear una temporada equivocada.
-		if cached && seasonMismatch(it.Title, cache.MALTitle) {
-			a.cacheDelete(it.MediaID)
-			cache = CacheEntry{}
-			cached = false
+		// Revalida también la identidad del título. Las versiones anteriores podían
+		// guardar coincidencias que solo compartían el número de temporada.
+		if cached {
+			_, safe := evaluateTitlePair(it.Title, cache.MALTitle, true)
+			if !safe {
+				a.cacheDelete(it.MediaID)
+				cache = CacheEntry{}
+				cached = false
+			}
 		}
 		fresh := cached && cache.LastValidated > 0 && now.Sub(time.Unix(cache.LastValidated, 0)) < revalidateAfter
 		unchanged := cached && sourceUnchanged(cache, it)

@@ -1,10 +1,24 @@
 # AnimeAV1 → MyAnimeList Sync
 
+
+## Cambios de v1.4.0
+
+- Matcher de seguridad reescrito: el número de temporada nunca puede rescatar un título base distinto.
+- Búsqueda en MAL por título base y evaluación local de todos los candidatos.
+- Coincidencias exactas, coincidencias de título base y coincidencias difusas se validan por separado.
+- Las coincidencias difusas exigen similitud alta y solapamiento real de palabras.
+- Rechazo de secuelas explícitas contra entradas sin temporada.
+- Detección de temporadas expresadas como `2nd Season`, `Season 2`, números romanos o un número final.
+- Invalidación automática de coincidencias inseguras guardadas por versiones anteriores.
+- Umbrales predeterminados más conservadores: `BASE_TITLE_MATCH_THRESHOLD=88` y `TITLE_MATCH_THRESHOLD=88`.
+
+Mantén `DRY_RUN=true` durante la primera ejecución y revisa el listado completo antes de activar escrituras.
+
 Aplicación web en Go que lee la biblioteca de AnimeAV1 y sincroniza el progreso con MyAnimeList. AnimeAV1 se utiliza siempre como origen de solo lectura: la aplicación nunca escribe ni modifica datos allí.
 
 La imagen está preparada para `linux/arm/v7` y se puede ejecutar en un WD My Cloud EX4100 mediante Docker y Portainer Community Edition.
 
-## Cambios de la versión 1.3.0
+## Cambios de la versión 1.4.0
 
 Esta versión corrige los fallos detectados durante la primera sincronización con caché:
 
@@ -91,7 +105,7 @@ Usa siempre una etiqueta fija en producción:
 ```yaml
 services:
   animeav1-mal-sync:
-    image: ovelayos/animeav1-mal-sync:v1.3.0
+    image: ovelayos/animeav1-mal-sync:v1.4.0
     container_name: animeav1-mal-sync
     restart: unless-stopped
     ports:
@@ -133,7 +147,7 @@ Publicación:
 
 El script:
 
-1. Pregunta la versión, por ejemplo `v1.3.0`.
+1. Pregunta la versión, por ejemplo `v1.4.0`.
 2. Valida el formato y comprueba que la etiqueta todavía no exista.
 3. Arranca `ssh-agent` cuando sea necesario y añade `~/.ssh/id_ed25519.pem` o la clave indicada.
 4. Verifica el remoto y que la rama local incluya los últimos cambios de `origin/main`.
@@ -145,7 +159,7 @@ El script:
 10. Construye una sola imagen ARMv7 y la publica con dos etiquetas:
 
 ```text
-ovelayos/animeav1-mal-sync:v1.3.0
+ovelayos/animeav1-mal-sync:v1.4.0
 ovelayos/animeav1-mal-sync:latest
 ```
 
@@ -167,7 +181,7 @@ Las dos etiquetas apuntan al mismo digest. Las versiones anteriores conservan su
 ## Publicación manual alternativa
 
 ```bash
-VERSION=v1.3.0
+VERSION=v1.4.0
 
 docker buildx build \
   --platform linux/arm/v7 \
