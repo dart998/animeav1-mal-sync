@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,7 +25,7 @@ import (
 )
 
 const (
-	appVersion = "1.4.0"
+	appVersion = "1.4.1"
 	authURL    = "https://myanimelist.net/v1/oauth2/authorize"
 	tokenURL   = "https://myanimelist.net/v1/oauth2/token"
 	apiBase    = "https://api.myanimelist.net/v2"
@@ -200,6 +201,7 @@ func main() {
 	mux.HandleFunc("/sync/stop", app.stopSyncHandler)
 	mux.HandleFunc("/cache/clear", app.clearCacheHandler)
 	mux.HandleFunc("/api/cache", app.cacheAPI)
+	mux.HandleFunc("/api/cache/delete", app.deleteCacheEntryAPI)
 	mux.HandleFunc("/history/clear", app.clearHistoryHandler)
 	mux.HandleFunc("/oauth/start", app.oauthStart)
 	mux.HandleFunc("/oauth/callback", app.oauthCallback)
@@ -395,9 +397,10 @@ function updateProgress(x){const manual=x.running&&x.progress_trigger==='manual'
 async function pollStatus(){try{const r=await fetch('/api/status',{cache:'no-store'});const x=await r.json();lastData=x;runningText.textContent=x.running?'Sí':'No';lastStatus.textContent=x.last_status||'Nunca';found.textContent=x.last?.found??0;updated.textContent=x.last?.updated??0;errors.textContent=x.last?.errors??0;lastMessage.textContent=x.last?.message||'';cacheCount.textContent=x.cache_entries??0;updateProgress(x)}catch(e){}}
 async function pollLogs(){try{const r=await fetch('/api/logs',{cache:'no-store'});const x=await r.json();terminal.textContent=x.text||'Sin historial'}catch(e){}}
 function showModal(title,html){modalTitle.textContent=title;modalBody.innerHTML=html;modal.classList.add('open')} function closeModal(){modal.classList.remove('open')}
-function resultTable(items){if(!items.length)return '<p>Sin elementos.</p>';return '<div class="table-wrap"><table><thead><tr><th>AnimeAV1</th><th>MAL</th><th>Puntos</th><th>Episodios</th><th>Resultado</th><th>Detalle</th></tr></thead><tbody>'+items.map(i=>'<tr><td>'+esc(i.source_title)+'</td><td>'+esc(i.mal_title||'—')+(i.mal_id?' <span class="muted">#'+i.mal_id+'</span>':'')+'</td><td>'+esc(i.match_score||'—')+'</td><td>'+esc(i.from)+' → '+esc(i.to)+'</td><td>'+esc(i.result)+'</td><td>'+esc(i.message||'')+'</td></tr>').join('')+'</tbody></table></div>'}
+function resultTable(items,cacheMode=false){if(!items.length)return '<p>Sin elementos.</p>';const actionHead=cacheMode?'<th aria-label="Acciones"></th>':'';return '<div class="table-wrap"><table><thead><tr><th>AnimeAV1</th><th>MAL</th><th>Puntos</th><th>Episodios</th><th>Resultado</th><th>Detalle</th>'+actionHead+'</tr></thead><tbody>'+items.map(i=>{const action=cacheMode?'<td><button type="button" class="danger trash-button" data-media-id="'+Number(i.media_id)+'" title="Eliminar esta coincidencia de la caché" aria-label="Eliminar coincidencia de '+esc(i.source_title)+'">🗑️</button></td>':'';return '<tr data-cache-row="'+Number(i.media_id)+'"><td>'+esc(i.source_title)+'</td><td>'+esc(i.mal_title||'—')+(i.mal_id?' <span class="muted">#'+i.mal_id+'</span>':'')+'</td><td>'+esc(i.match_score||'—')+'</td><td>'+esc(i.from)+' → '+esc(i.to)+'</td><td>'+esc(i.result)+'</td><td>'+esc(i.message||'')+'</td>'+action+'</tr>'}).join('')+'</tbody></table></div>'}
 function openResults(kind){const items=lastData?.last?.items||[];const filtered=kind==='all'?items:items.filter(i=>i.result===kind);showModal(kind==='all'?'Coincidencias de la última ejecución':kind==='updated'?'Actualizados':'Errores',resultTable(filtered))}
-async function openCache(){try{const r=await fetch('/api/cache',{cache:'no-store'});const x=await r.json();const items=(x.items||[]).map(i=>({source_title:i.source_title,mal_title:i.mal_title,mal_id:i.mal_id,match_score:i.match_score,from:i.mal_seen,to:i.source_seen,result:'cache',message:'Validado: '+(i.last_validated?new Date(i.last_validated*1000).toLocaleString():'—')}));showModal('Caché ('+items.length+')',resultTable(items))}catch(e){showModal('Caché','<p>Error al cargar la caché.</p>')}}
+async function deleteCacheMatch(mediaID,title){if(!confirm('¿Eliminar de la caché la coincidencia de "'+title+'"? En la siguiente sincronización se buscará de nuevo.'))return;try{const r=await fetch('/api/cache/delete',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'media_id='+encodeURIComponent(mediaID)});const x=await r.json().catch(()=>({}));if(!r.ok)throw new Error(x.error||'No se pudo eliminar');await openCache();await pollStatus()}catch(e){alert(e.message||'No se pudo eliminar la coincidencia')}}
+async function openCache(){try{const r=await fetch('/api/cache',{cache:'no-store'});const x=await r.json();const items=(x.items||[]).map(i=>({media_id:i.media_id,source_title:i.source_title,mal_title:i.mal_title,mal_id:i.mal_id,match_score:i.match_score,from:i.mal_seen,to:i.source_seen,result:'cache',message:'Validado: '+(i.last_validated?new Date(i.last_validated*1000).toLocaleString():'—')}));showModal('Caché ('+items.length+')',resultTable(items,true));document.querySelectorAll('.trash-button').forEach(b=>b.addEventListener('click',()=>{const row=b.closest('tr');deleteCacheMatch(b.dataset.mediaId,row?.children[0]?.textContent||'esta entrada')}))}catch(e){showModal('Caché','<p>Error al cargar la caché.</p>')}}
 updateProgress({running:initial.running,progress_processed:initial.processed,progress_total:initial.total,progress_message:initial.message,progress_trigger:initial.trigger});setInterval(pollStatus,1000);setInterval(pollLogs,2000);pollStatus();pollLogs();
 </script></body></html>`, appVersion, cookieStatus, html.EscapeString(st.Settings.Cookie), malStatus, st.Settings.IntervalMinutes, checked(st.Settings.DryRun), checked(st.Settings.OnlyIncrease), checked(st.Settings.AutoSync), a.cacheCount(), runText, html.EscapeString(lastStatus), st.Last.Found, st.Last.Updated, st.Last.Errors, html.EscapeString(st.Last.Message), terminal, running, processed, total, progressMessage, progressTrigger)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1120,6 +1123,11 @@ func evaluateTitlePair(source, candidate string, primary bool) (titleMatch, bool
 	if !fullExact && sn > 1 && cn == 0 {
 		return titleMatch{}, false
 	}
+	// Una entrada sin temporada explícita representa normalmente la primera serie.
+	// No debe enlazarse con una secuela explícita (II, 2nd Season, etc.).
+	if !fullExact && sn == 0 && cn > 1 {
+		return titleMatch{}, false
+	}
 	if fullExact {
 		return titleMatch{score: 120 - variantPenalty(source, candidate), baseScore: 100, source: source, candidate: candidate}, true
 	}
@@ -1177,8 +1185,8 @@ func (a *App) resolve(ctx context.Context, it AVItem) (MALAnime, int, error) {
 	}
 	bestScore := -1
 	bestBase := -1
+	bestRank := -100000
 	var best MALAnime
-	sources := candidateTitles(it)
 	for id := range ids {
 		var anime MALAnime
 		fields := "id,title,alternative_titles,num_episodes,media_type,start_date,my_list_status"
@@ -1187,33 +1195,33 @@ func (a *App) resolve(ctx context.Context, it AVItem) (MALAnime, int, error) {
 		}
 		var tm titleMatch
 		matched := false
-		for si, sourceTitle := range sources {
-			if isGenericTitle(sourceTitle) {
-				continue
-			}
-			for _, malTitle := range animeTitles(anime) {
-				m, ok := evaluateTitlePair(sourceTitle, malTitle, si == 0)
-				if ok && (!matched || m.score > tm.score || (m.score == tm.score && m.baseScore > tm.baseScore)) {
-					tm, matched = m, true
-				}
+		// La coincidencia debe ser segura usando el título principal de AnimeAV1.
+		// Los alias sirven para ampliar la búsqueda, pero nunca pueden rescatar por sí
+		// solos una película, especial, secuela o entrada distinta.
+		for _, malTitle := range animeTitles(anime) {
+			m, ok := evaluateTitlePair(it.Title, malTitle, true)
+			if ok && (!matched || m.score > tm.score || (m.score == tm.score && m.baseScore > tm.baseScore)) {
+				tm, matched = m, true
 			}
 		}
 		if !matched {
 			continue
 		}
-		score := tm.score
+		// Los episodios ayudan a desempatar candidatos, pero nunca pueden convertir
+		// una coincidencia textual segura en un error ni rescatar un título inseguro.
+		rank := tm.score
 		if it.Total > 0 && anime.NumEpisodes > 0 {
 			d := int(math.Abs(float64(it.Total - anime.NumEpisodes)))
 			if d == 0 {
-				score += 4
+				rank += 4
 			} else if d <= 2 {
-				score += 1
+				rank += 1
 			} else if d > 5 {
-				score -= 8
+				rank -= 8
 			}
 		}
-		if score > bestScore || (score == bestScore && tm.baseScore > bestBase) {
-			bestScore, bestBase, best = score, tm.baseScore, anime
+		if rank > bestRank || (rank == bestRank && (tm.score > bestScore || (tm.score == bestScore && tm.baseScore > bestBase))) {
+			bestRank, bestScore, bestBase, best = rank, tm.score, tm.baseScore, anime
 		}
 	}
 	threshold := getenvInt("TITLE_MATCH_THRESHOLD", 88)
@@ -1631,8 +1639,51 @@ func (a *App) cacheAPI(w http.ResponseWriter, r *http.Request) {
 		items = append(items, entry)
 	}
 	a.cacheMu.Unlock()
+	sort.Slice(items, func(i, j int) bool { return items[i].MediaID < items[j].MediaID })
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	json.NewEncoder(w).Encode(map[string]any{"items": items, "count": len(items)})
+}
+
+func (a *App) deleteCacheEntryAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"error": "se requiere POST"})
+		return
+	}
+	a.mu.Lock()
+	running := a.running
+	a.mu.Unlock()
+	if running {
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"error": "detén la sincronización antes de modificar la caché"})
+		return
+	}
+	mediaID, err := strconv.Atoi(r.FormValue("media_id"))
+	if err != nil || mediaID <= 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "media_id no válido"})
+		return
+	}
+	a.cacheMu.Lock()
+	entry, exists := a.cache[strconv.Itoa(mediaID)]
+	if exists {
+		delete(a.cache, strconv.Itoa(mediaID))
+		err = a.saveCacheLocked()
+	}
+	a.cacheMu.Unlock()
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	if !exists {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "la coincidencia ya no existe"})
+		return
+	}
+	a.appendHistory(map[string]any{"ts": time.Now().Unix(), "event": "cache_entry_deleted", "media_id": mediaID, "source_title": entry.SourceTitle, "mal_id": entry.MALID, "mal_title": entry.MALTitle, "message": "Coincidencia eliminada manualmente de la caché"})
+	json.NewEncoder(w).Encode(map[string]any{"ok": true, "media_id": mediaID, "count": a.cacheCount()})
 }
 
 func (a *App) clearHistoryHandler(w http.ResponseWriter, r *http.Request) {
