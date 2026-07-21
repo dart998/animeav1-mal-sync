@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	appVersion = "1.2.1"
+	appVersion = "1.3.0"
 	authURL    = "https://myanimelist.net/v1/oauth2/authorize"
 	tokenURL   = "https://myanimelist.net/v1/oauth2/token"
 	apiBase    = "https://api.myanimelist.net/v2"
@@ -46,16 +46,30 @@ type Settings struct {
 	AutoSync        bool   `json:"auto_sync"`
 }
 
+type RunItem struct {
+	MediaID     int    `json:"media_id"`
+	SourceTitle string `json:"source_title"`
+	MALID       int    `json:"mal_id,omitempty"`
+	MALTitle    string `json:"mal_title,omitempty"`
+	MatchScore  int    `json:"match_score,omitempty"`
+	From        int    `json:"from,omitempty"`
+	To          int    `json:"to,omitempty"`
+	Status      string `json:"status"`
+	Result      string `json:"result"`
+	Message     string `json:"message,omitempty"`
+}
+
 type LastRun struct {
-	Status    string   `json:"status"`
-	Started   int64    `json:"started"`
-	Finished  int64    `json:"finished"`
-	Found     int      `json:"found"`
-	Updated   int      `json:"updated"`
-	Skipped   int      `json:"skipped"`
-	Errors    int      `json:"errors"`
-	Message   string   `json:"message"`
-	Unmatched []string `json:"unmatched"`
+	Status    string    `json:"status"`
+	Started   int64     `json:"started"`
+	Finished  int64     `json:"finished"`
+	Found     int       `json:"found"`
+	Updated   int       `json:"updated"`
+	Skipped   int       `json:"skipped"`
+	Errors    int       `json:"errors"`
+	Message   string    `json:"message"`
+	Unmatched []string  `json:"unmatched"`
+	Items     []RunItem `json:"items,omitempty"`
 }
 
 type State struct {
@@ -185,6 +199,8 @@ func main() {
 	mux.HandleFunc("/sync", app.syncHandler)
 	mux.HandleFunc("/sync/stop", app.stopSyncHandler)
 	mux.HandleFunc("/cache/clear", app.clearCacheHandler)
+	mux.HandleFunc("/api/cache", app.cacheAPI)
+	mux.HandleFunc("/history/clear", app.clearHistoryHandler)
 	mux.HandleFunc("/oauth/start", app.oauthStart)
 	mux.HandleFunc("/oauth/callback", app.oauthCallback)
 	mux.HandleFunc("/oauth/disconnect", app.oauthDisconnect)
@@ -330,7 +346,7 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.mu.Lock()
-	s := a.state
+	st := a.state
 	running := a.running
 	processed := a.progressProcessed
 	total := a.progressTotal
@@ -338,55 +354,52 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 	progressTrigger := a.progressTrigger
 	a.mu.Unlock()
 	cookieStatus := "❌ Sin configurar"
-	if s.Settings.Cookie != "" {
+	if st.Settings.Cookie != "" {
 		cookieStatus = "⚠️ Guardada, sin verificar"
-		if s.AnimeMessage != "" && s.AnimeMessage != "Pendiente de verificar" {
-			cookieStatus = "❌ " + html.EscapeString(s.AnimeMessage)
+		if st.AnimeMessage != "" && st.AnimeMessage != "Pendiente de verificar" {
+			cookieStatus = "❌ " + html.EscapeString(st.AnimeMessage)
 		}
 	}
-	if s.AnimeOK {
-		cookieStatus = "✅ " + html.EscapeString(s.AnimeMessage)
+	if st.AnimeOK {
+		cookieStatus = "✅ " + html.EscapeString(st.AnimeMessage)
 	}
 	malStatus := "❌ No autorizado"
-	if s.Token.AccessToken != "" {
+	if st.Token.AccessToken != "" {
 		malStatus = "✅ Autorizado"
-		if s.MALUsername != "" {
-			malStatus += " como " + html.EscapeString(s.MALUsername)
+		if st.MALUsername != "" {
+			malStatus += " como " + html.EscapeString(st.MALUsername)
 		}
 	}
-	last := s.Last.Status
-	if last == "" {
-		last = "Nunca"
+	lastStatus := st.Last.Status
+	if lastStatus == "" {
+		lastStatus = "Nunca"
 	}
 	runText := "No"
 	if running {
 		runText = "Sí"
 	}
-	percent := 0
-	if total > 0 {
-		percent = processed * 100 / total
-	}
-	if percent > 100 {
-		percent = 100
-	}
 	terminal := html.EscapeString(a.recentHistoryText(40))
-	cacheCount := a.cacheCount()
 	page := fmt.Sprintf(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>AnimeAV1 → MAL</title><link rel="icon" type="image/svg+xml" href="/favicon.svg"><style>
-body{font-family:Arial,sans-serif;background:#111827;color:#e5e7eb;max-width:900px;margin:30px auto;padding:0 16px}h1{margin-bottom:8px}.card{background:#1f2937;border-radius:12px;padding:20px;margin:16px 0}input,textarea{width:100%%;box-sizing:border-box;background:#111827;color:#fff;border:1px solid #4b5563;border-radius:8px;padding:10px;margin:6px 0 12px}button,.btn{display:inline-block;background:#14b8a6;color:#041311;border:0;border-radius:8px;padding:10px 15px;font-weight:bold;text-decoration:none;cursor:pointer}.secondary{background:#374151;color:#fff}.danger{background:#ef4444;color:#fff}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}.stat{background:#111827;padding:12px;border-radius:8px}.muted{color:#9ca3af}.msg{white-space:pre-wrap;word-break:break-word}.progress-wrap{display:none;margin-top:16px}.progress-track{height:22px;background:#111827;border:1px solid #4b5563;border-radius:999px;overflow:hidden}.progress-bar{height:100%%;width:0;background:#14b8a6;transition:width .25s ease}.progress-label{margin-top:7px;color:#d1d5db}.terminal{background:#000;color:#fff;border:1px solid #4b5563;border-radius:8px;padding:14px;height:280px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:13px/1.45 Consolas,"Courier New",monospace}</style></head><body>
+body{font-family:Arial,sans-serif;background:#111827;color:#e5e7eb;max-width:1000px;margin:30px auto;padding:0 16px}h1{margin-bottom:8px}.card{background:#1f2937;border-radius:12px;padding:20px;margin:16px 0}input,textarea{width:100%%;box-sizing:border-box;background:#111827;color:#fff;border:1px solid #4b5563;border-radius:8px;padding:10px;margin:6px 0 12px}button,.btn{display:inline-block;background:#14b8a6;color:#041311;border:0;border-radius:8px;padding:10px 15px;font-weight:bold;text-decoration:none;cursor:pointer}.secondary{background:#374151;color:#fff}.danger{background:#ef4444;color:#fff}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}.stat{background:#111827;padding:12px;border-radius:8px}.stat.clickable{cursor:pointer}.stat.clickable:hover{outline:1px solid #14b8a6}.muted{color:#9ca3af}.msg{white-space:pre-wrap;word-break:break-word}.progress-wrap{display:none;margin-top:16px}.progress-track{height:22px;background:#111827;border:1px solid #4b5563;border-radius:999px;overflow:hidden}.progress-bar{height:100%%;width:0;background:#14b8a6;transition:width .25s}.progress-label{margin-top:7px;color:#d1d5db}.terminal{background:#000;color:#fff;border:1px solid #4b5563;border-radius:8px;padding:14px;height:280px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:13px/1.45 Consolas,monospace}.modal{display:none;position:fixed;inset:0;background:#000b;z-index:20;padding:4vh 3vw}.modal.open{display:block}.modal-box{background:#1f2937;max-width:1100px;max-height:88vh;margin:auto;border-radius:12px;padding:18px;overflow:auto}.modal-head{display:flex;justify-content:space-between;align-items:center;gap:15px}.table-wrap{overflow:auto}table{width:100%%;border-collapse:collapse;font-size:14px}th,td{padding:9px;border-bottom:1px solid #374151;text-align:left;vertical-align:top}th{position:sticky;top:0;background:#1f2937}.ok{color:#6ee7b7}.bad{color:#fca5a5}.warn{color:#fde68a}</style></head><body>
 <h1>AnimeAV1 → MyAnimeList</h1><div class="muted">v%s · EX4100 ARMv7 · lectura SvelteKit por HTTP</div>
-<div class="card"><h2>AnimeAV1</h2><p>%s</p><form method="post" action="/cookie"><label>Cookie completa del navegador</label><textarea name="cookie" rows="3" placeholder="session=...; otra_cookie=...">%s</textarea><button>Guardar cookie</button> <a class="btn secondary" href="/check">Verificar</a></form><p class="muted">Pega el contenido completo de la cabecera Cookie. Se guarda únicamente en /data/config/config.json.</p></div>
+<div class="card"><h2>AnimeAV1</h2><p>%s</p><form method="post" action="/cookie"><label>Cookie completa del navegador</label><textarea name="cookie" rows="3" placeholder="session=...; otra_cookie=...">%s</textarea><button>Guardar cookie</button> <a class="btn secondary" href="/check">Verificar</a></form></div>
 <div class="card"><h2>MyAnimeList</h2><p>%s</p><a class="btn" href="/oauth/start">Conectar con MAL</a> <a class="btn danger" href="/oauth/disconnect">Desconectar</a></div>
-<div class="card"><h2>Sincronización</h2><form method="post" action="/settings"><label>Intervalo en minutos</label><input type="number" min="1" name="interval" value="%d"><label><input style="width:auto" type="checkbox" name="dry" %s> Modo simulación (no escribe en MAL)</label><br><label><input style="width:auto" type="checkbox" name="increase" %s> Solo aumentar episodios</label><br><label><input style="width:auto" type="checkbox" name="auto" %s> Sincronización automática</label><br><br><button>Guardar ajustes</button> <button id="syncButton" formaction="/sync">Sincronizar ahora</button></form><form method="post" action="/sync/stop" style="display:inline"><button id="stopButton" class="danger" style="display:none">Detener sincronización</button></form> <form method="post" action="/cache/clear" style="display:inline" onsubmit="return confirm('¿Eliminar toda la caché de coincidencias? La siguiente sincronización volverá a consultar MAL.')"><button id="clearCacheButton" class="secondary">Eliminar caché</button></form><p class="muted">Caché persistente: <b id="cacheCount">%d</b> coincidencias · revalidación cada 24 horas.</p><div id="progressWrap" class="progress-wrap"><div class="progress-track"><div id="progressBar" class="progress-bar"></div></div><div id="progressLabel" class="progress-label"></div></div></div>
-<div class="card"><h2>Estado</h2><div class="grid"><div class="stat"><b>Ejecutándose</b><br><span id="runningText">%s</span></div><div class="stat"><b>Último estado</b><br><span id="lastStatus">%s</span></div><div class="stat"><b>Encontrados</b><br><span id="found">%d</span></div><div class="stat"><b>Actualizados</b><br><span id="updated">%d</span></div><div class="stat"><b>Errores</b><br><span id="errors">%d</span></div></div><p id="lastMessage" class="msg">%s</p><p><a class="btn secondary" href="/health">JSON</a> <a class="btn secondary" href="/history">Historial</a></p></div>
-<div class="card"><h2>Últimos logs</h2><div id="terminal" class="terminal">%s</div></div>
+<div class="card"><h2>Sincronización</h2><form method="post" action="/settings"><label>Intervalo en minutos</label><input type="number" min="1" name="interval" value="%d"><label><input style="width:auto" type="checkbox" name="dry" %s> Modo simulación (no escribe en MAL)</label><br><label><input style="width:auto" type="checkbox" name="increase" %s> Solo aumentar episodios</label><br><label><input style="width:auto" type="checkbox" name="auto" %s> Sincronización automática</label><br><br><button>Guardar ajustes</button> <button formaction="/sync">Sincronizar ahora</button></form><form method="post" action="/sync/stop" style="display:inline"><button id="stopButton" class="danger" style="display:none">Detener sincronización</button></form> <button class="secondary" onclick="openCache()">Ver caché</button> <form method="post" action="/cache/clear" style="display:inline" onsubmit="return confirm('¿Eliminar toda la caché?')"><button id="clearCacheButton" class="secondary">Eliminar caché</button></form><p class="muted">Caché persistente: <b id="cacheCount">%d</b> coincidencias.</p><div id="progressWrap" class="progress-wrap"><div class="progress-track"><div id="progressBar" class="progress-bar"></div></div><div id="progressLabel" class="progress-label"></div></div></div>
+<div class="card"><h2>Estado</h2><div class="grid"><div class="stat"><b>Ejecutándose</b><br><span id="runningText">%s</span></div><div class="stat"><b>Último estado</b><br><span id="lastStatus">%s</span></div><div class="stat clickable" onclick="openResults('all')"><b>Encontrados</b><br><span id="found">%d</span></div><div class="stat clickable" onclick="openResults('updated')"><b>Actualizados</b><br><span id="updated">%d</span></div><div class="stat clickable" onclick="openResults('error')"><b>Errores</b><br><span id="errors">%d</span></div></div><p id="lastMessage" class="msg">%s</p><p><a class="btn secondary" target="_blank" rel="noopener" href="/health">JSON</a> <a class="btn secondary" target="_blank" rel="noopener" href="/history">Historial</a></p></div>
+<div class="card"><h2>Últimos logs</h2><form method="post" action="/history/clear" onsubmit="return confirm('¿Borrar todo el historial de logs?')"><button class="danger">Borrar historial</button></form><br><div id="terminal" class="terminal">%s</div></div>
+<div id="modal" class="modal" onclick="if(event.target===this)closeModal()"><div class="modal-box"><div class="modal-head"><h2 id="modalTitle">Detalles</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div><div id="modalBody"></div></div></div>
 <script>
-const initial={running:%t,processed:%d,total:%d,message:%q,trigger:%q,percent:%d};
-function updateProgress(x){const wrap=document.getElementById('progressWrap');const bar=document.getElementById('progressBar');const label=document.getElementById('progressLabel');const stop=document.getElementById('stopButton');const clear=document.getElementById('clearCacheButton');const manual=x.running&&x.progress_trigger==='manual';wrap.style.display=manual?'block':'none';stop.style.display=manual?'inline-block':'none';clear.disabled=!!x.running;if(manual){const pct=x.progress_total>0?Math.min(100,Math.floor(x.progress_processed*100/x.progress_total)):0;bar.style.width=pct+'%%';label.textContent=(x.progress_message||'Sincronizando')+' · '+x.progress_processed+'/'+x.progress_total+' ('+pct+'%%)';}}
-async function pollStatus(){try{const r=await fetch('/api/status',{cache:'no-store'});const x=await r.json();document.getElementById('runningText').textContent=x.running?'Sí':'No';document.getElementById('lastStatus').textContent=x.last_status||'Nunca';document.getElementById('found').textContent=x.last?.found??0;document.getElementById('updated').textContent=x.last?.updated??0;document.getElementById('errors').textContent=x.last?.errors??0;document.getElementById('lastMessage').textContent=x.last?.message||'';document.getElementById('cacheCount').textContent=x.cache_entries??0;updateProgress(x);}catch(e){}}
-async function pollLogs(){try{const r=await fetch('/api/logs',{cache:'no-store'});const x=await r.json();const t=document.getElementById('terminal');t.textContent=x.text||'Sin historial';t.scrollTop=0;}catch(e){}}
-updateProgress({running:initial.running,progress_processed:initial.processed,progress_total:initial.total,progress_message:initial.message,progress_trigger:initial.trigger});
-setInterval(pollStatus,1000);setInterval(pollLogs,2000);pollStatus();pollLogs();
-</script></body></html>`, appVersion, cookieStatus, html.EscapeString(s.Settings.Cookie), malStatus, s.Settings.IntervalMinutes, checked(s.Settings.DryRun), checked(s.Settings.OnlyIncrease), checked(s.Settings.AutoSync), cacheCount, runText, html.EscapeString(last), s.Last.Found, s.Last.Updated, s.Last.Errors, html.EscapeString(s.Last.Message), terminal, running, processed, total, progressMessage, progressTrigger, percent)
+let lastData=null; const initial={running:%t,processed:%d,total:%d,message:%q,trigger:%q};
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function updateProgress(x){const manual=x.running&&x.progress_trigger==='manual';progressWrap.style.display=manual?'block':'none';stopButton.style.display=manual?'inline-block':'none';clearCacheButton.disabled=!!x.running;if(manual){const pct=x.progress_total?Math.min(100,Math.floor(x.progress_processed*100/x.progress_total)):0;progressBar.style.width=pct+'%%';progressLabel.textContent=(x.progress_message||'Sincronizando')+' · '+x.progress_processed+'/'+x.progress_total+' ('+pct+'%%)'}}
+async function pollStatus(){try{const r=await fetch('/api/status',{cache:'no-store'});const x=await r.json();lastData=x;runningText.textContent=x.running?'Sí':'No';lastStatus.textContent=x.last_status||'Nunca';found.textContent=x.last?.found??0;updated.textContent=x.last?.updated??0;errors.textContent=x.last?.errors??0;lastMessage.textContent=x.last?.message||'';cacheCount.textContent=x.cache_entries??0;updateProgress(x)}catch(e){}}
+async function pollLogs(){try{const r=await fetch('/api/logs',{cache:'no-store'});const x=await r.json();terminal.textContent=x.text||'Sin historial'}catch(e){}}
+function showModal(title,html){modalTitle.textContent=title;modalBody.innerHTML=html;modal.classList.add('open')} function closeModal(){modal.classList.remove('open')}
+function resultTable(items){if(!items.length)return '<p>Sin elementos.</p>';return '<div class="table-wrap"><table><thead><tr><th>AnimeAV1</th><th>MAL</th><th>Puntos</th><th>Episodios</th><th>Resultado</th><th>Detalle</th></tr></thead><tbody>'+items.map(i=>'<tr><td>'+esc(i.source_title)+'</td><td>'+esc(i.mal_title||'—')+(i.mal_id?' <span class="muted">#'+i.mal_id+'</span>':'')+'</td><td>'+esc(i.match_score||'—')+'</td><td>'+esc(i.from)+' → '+esc(i.to)+'</td><td>'+esc(i.result)+'</td><td>'+esc(i.message||'')+'</td></tr>').join('')+'</tbody></table></div>'}
+function openResults(kind){const items=lastData?.last?.items||[];const filtered=kind==='all'?items:items.filter(i=>i.result===kind);showModal(kind==='all'?'Coincidencias de la última ejecución':kind==='updated'?'Actualizados':'Errores',resultTable(filtered))}
+async function openCache(){try{const r=await fetch('/api/cache',{cache:'no-store'});const x=await r.json();const items=(x.items||[]).map(i=>({source_title:i.source_title,mal_title:i.mal_title,mal_id:i.mal_id,match_score:i.match_score,from:i.mal_seen,to:i.source_seen,result:'cache',message:'Validado: '+(i.last_validated?new Date(i.last_validated*1000).toLocaleString():'—')}));showModal('Caché ('+items.length+')',resultTable(items))}catch(e){showModal('Caché','<p>Error al cargar la caché.</p>')}}
+updateProgress({running:initial.running,progress_processed:initial.processed,progress_total:initial.total,progress_message:initial.message,progress_trigger:initial.trigger});setInterval(pollStatus,1000);setInterval(pollLogs,2000);pollStatus();pollLogs();
+</script></body></html>`, appVersion, cookieStatus, html.EscapeString(st.Settings.Cookie), malStatus, st.Settings.IntervalMinutes, checked(st.Settings.DryRun), checked(st.Settings.OnlyIncrease), checked(st.Settings.AutoSync), a.cacheCount(), runText, html.EscapeString(lastStatus), st.Last.Found, st.Last.Updated, st.Last.Errors, html.EscapeString(st.Last.Message), terminal, running, processed, total, progressMessage, progressTrigger)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	io.WriteString(w, page)
 }
@@ -999,6 +1012,36 @@ func seasonMismatch(source, candidate string) bool {
 	return a > 0 && b > 0 && a != b
 }
 
+func baseTitle(title string) string {
+	s := strings.ToLower(title)
+	patterns := []string{
+		`\bseason\s*[1-9][0-9]*\b`, `\b[1-9][0-9]*(?:st|nd|rd|th)\s+season\b`,
+		`\bpart\s*[1-9][0-9]*\b`, `\b[1-9][0-9]*\s*(?:st|nd|rd|th)?\s*part\b`,
+	}
+	for _, pattern := range patterns {
+		s = regexp.MustCompile(pattern).ReplaceAllString(s, " ")
+	}
+	s = regexp.MustCompile(`(?i)(?:^|\s)(II|III|IV|V|VI)(?:\s*[:\-]|$)`).ReplaceAllString(s, " ")
+	return normalize(s)
+}
+
+func variantPenalty(source, candidate string) int {
+	s, c := strings.ToLower(source), strings.ToLower(candidate)
+	penalty := 0
+	for _, marker := range []string{"manner movie", "recap", "special", "pv", "trailer", "summary"} {
+		if strings.Contains(c, marker) && !strings.Contains(s, marker) {
+			penalty += 35
+		}
+	}
+	if strings.Contains(c, "part 2") && !strings.Contains(s, "part 2") {
+		penalty += 20
+	}
+	if strings.Contains(c, "movie") && !strings.Contains(s, "movie") && !strings.Contains(s, "gekijouban") {
+		penalty += 15
+	}
+	return penalty
+}
+
 func (a *App) resolve(ctx context.Context, it AVItem) (MALAnime, int, error) {
 	ids := map[int]string{}
 	var searchErr error
@@ -1011,9 +1054,7 @@ func (a *App) resolve(ctx context.Context, it AVItem) (MALAnime, int, error) {
 				continue
 			}
 			for _, x := range sr.Data {
-				if _, ok := ids[x.Node.ID]; !ok {
-					ids[x.Node.ID] = x.Node.Title
-				}
+				ids[x.Node.ID] = x.Node.Title
 			}
 		}
 	}
@@ -1021,6 +1062,7 @@ func (a *App) resolve(ctx context.Context, it AVItem) (MALAnime, int, error) {
 		return MALAnime{}, 0, searchErr
 	}
 	bestScore := -1
+	bestBase := -1
 	var best MALAnime
 	for id := range ids {
 		var anime MALAnime
@@ -1028,35 +1070,43 @@ func (a *App) resolve(ctx context.Context, it AVItem) (MALAnime, int, error) {
 		if err := a.malRequestContext(ctx, "GET", fmt.Sprintf("/anime/%d?fields=%s", id, fields), nil, &anime); err != nil {
 			continue
 		}
-		// Nunca se acepta una temporada explícitamente distinta.
 		if seasonMismatch(it.Title, anime.Title) {
 			continue
 		}
-		titleScore := 0
+		titleScore, baseScore := 0, 0
 		for _, sourceTitle := range candidateTitles(it) {
 			for _, malTitle := range animeTitles(anime) {
 				if sc := similarity(sourceTitle, malTitle); sc > titleScore {
 					titleScore = sc
 				}
+				if sc := similarity(baseTitle(sourceTitle), baseTitle(malTitle)); sc > baseScore {
+					baseScore = sc
+				}
 			}
 		}
-		score := titleScore
+		// El número de temporada nunca puede rescatar títulos base distintos.
+		if baseScore < getenvInt("BASE_TITLE_MATCH_THRESHOLD", 72) {
+			continue
+		}
+		score := titleScore - variantPenalty(it.Title, anime.Title)
+		if seasonNumber(it.Title) > 0 && seasonNumber(anime.Title) == seasonNumber(it.Title) {
+			score += 4
+		}
 		if it.Total > 0 && anime.NumEpisodes > 0 {
 			d := int(math.Abs(float64(it.Total - anime.NumEpisodes)))
 			if d == 0 {
-				score += 12
+				score += 6
 			} else if d <= 2 {
-				score += 5
+				score += 2
 			} else if d > 5 {
-				score -= 15
+				score -= 10
 			}
 		}
-		if score > bestScore {
-			bestScore = score
-			best = anime
+		if score > bestScore || (score == bestScore && baseScore > bestBase) {
+			bestScore, bestBase, best = score, baseScore, anime
 		}
 	}
-	threshold := getenvInt("TITLE_MATCH_THRESHOLD", 80)
+	threshold := getenvInt("TITLE_MATCH_THRESHOLD", 82)
 	if best.ID == 0 || bestScore < threshold {
 		return MALAnime{}, bestScore, fmt.Errorf("sin coincidencia suficiente (%d puntos)", bestScore)
 	}
@@ -1265,6 +1315,7 @@ func (a *App) runSync(trigger string) {
 		// Ruta rápida: la fuente no cambió, MAL fue validado recientemente y el estado cacheado ya es correcto.
 		if unchanged && fresh && (cacheAlreadyCorrect || cacheProtected) {
 			last.Skipped++
+			last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, MALID: cache.MALID, MALTitle: cache.MALTitle, MatchScore: cache.MatchScore, From: cache.MALSeen, To: desiredCached, Status: status, Result: "skipped", Message: "Sin cambios (caché)"})
 			a.mu.Lock()
 			a.progressProcessed = idx + 1
 			a.progressMessage = "Sin cambios (caché): " + it.Title
@@ -1301,6 +1352,7 @@ func (a *App) runSync(trigger string) {
 				}
 				last.Errors++
 				last.Unmatched = append(last.Unmatched, it.Title+": "+err.Error())
+				last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, Status: status, Result: "error", Message: err.Error()})
 				continue
 			}
 		} else if !needValidate {
@@ -1322,6 +1374,7 @@ func (a *App) runSync(trigger string) {
 
 		if only && desired < current {
 			last.Skipped++
+			last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, MALID: anime.ID, MALTitle: anime.Title, MatchScore: matchScore, From: current, To: desired, Status: status, Result: "skipped", Message: "Protegido por solo aumentar episodios"})
 			a.cachePut(entry)
 			a.mu.Lock()
 			a.progressProcessed = idx + 1
@@ -1330,6 +1383,7 @@ func (a *App) runSync(trigger string) {
 		}
 		if desired == current && currentStatus == status {
 			last.Skipped++
+			last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, MALID: anime.ID, MALTitle: anime.Title, MatchScore: matchScore, From: current, To: desired, Status: status, Result: "skipped", Message: "Ya estaba sincronizado"})
 			a.cachePut(entry)
 			a.mu.Lock()
 			a.progressProcessed = idx + 1
@@ -1345,6 +1399,7 @@ func (a *App) runSync(trigger string) {
 				}
 				last.Errors++
 				last.Unmatched = append(last.Unmatched, it.Title+": "+err.Error())
+				last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, MALID: anime.ID, MALTitle: anime.Title, MatchScore: matchScore, From: current, To: desired, Status: status, Result: "error", Message: err.Error()})
 				continue
 			}
 			entry.MALSeen = desired
@@ -1354,6 +1409,7 @@ func (a *App) runSync(trigger string) {
 		}
 		a.cachePut(entry)
 		last.Updated++
+		last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, MALID: anime.ID, MALTitle: anime.Title, MatchScore: matchScore, From: current, To: desired, Status: status, Result: "updated", Message: map[bool]string{true: "Simulado", false: "Actualizado"}[dry]})
 		a.appendHistory(map[string]any{"ts": time.Now().Unix(), "title": it.Title, "animeav1_media_id": it.MediaID, "mal_id": anime.ID, "mal_title": anime.Title, "match_score": matchScore, "from": current, "to": desired, "status": status, "dry_run": dry})
 		a.mu.Lock()
 		a.progressProcessed = idx + 1
@@ -1452,6 +1508,37 @@ func (a *App) recentHistoryText(limit int) string {
 func (a *App) logsAPI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	json.NewEncoder(w).Encode(map[string]string{"text": a.recentHistoryText(40)})
+}
+
+func (a *App) cacheAPI(w http.ResponseWriter, r *http.Request) {
+	a.cacheMu.Lock()
+	items := make([]CacheEntry, 0, len(a.cache))
+	for _, entry := range a.cache {
+		items = append(items, entry)
+	}
+	a.cacheMu.Unlock()
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(w).Encode(map[string]any{"items": items, "count": len(items)})
+}
+
+func (a *App) clearHistoryHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "POST", http.StatusMethodNotAllowed)
+		return
+	}
+	a.mu.Lock()
+	running := a.running
+	a.mu.Unlock()
+	if running {
+		http.Error(w, "No se puede borrar el historial durante una sincronización", http.StatusConflict)
+		return
+	}
+	path := filepath.Join(a.dataDir, "history.jsonl")
+	if err := os.WriteFile(path, []byte{}, 0600); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	redirectHome(w, r)
 }
 
 func (a *App) history(w http.ResponseWriter, r *http.Request) {

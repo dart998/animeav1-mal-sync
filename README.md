@@ -4,7 +4,7 @@ Aplicación web en Go que lee la biblioteca de AnimeAV1 y sincroniza el progreso
 
 La imagen está preparada para `linux/arm/v7` y se puede ejecutar en un WD My Cloud EX4100 mediante Docker y Portainer Community Edition.
 
-## Cambios de la versión 1.2.1
+## Cambios de la versión 1.3.0
 
 Esta versión corrige los fallos detectados durante la primera sincronización con caché:
 
@@ -91,7 +91,7 @@ Usa siempre una etiqueta fija en producción:
 ```yaml
 services:
   animeav1-mal-sync:
-    image: ovelayos/animeav1-mal-sync:v1.2.1
+    image: ovelayos/animeav1-mal-sync:v1.3.0
     container_name: animeav1-mal-sync
     restart: unless-stopped
     ports:
@@ -167,7 +167,7 @@ Las dos etiquetas apuntan al mismo digest. Las versiones anteriores conservan su
 ## Publicación manual alternativa
 
 ```bash
-VERSION=v1.2.1
+VERSION=v1.3.0
 
 docker buildx build \
   --platform linux/arm/v7 \
