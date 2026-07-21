@@ -1,23 +1,24 @@
 # AnimeAV1 → MyAnimeList Sync
 
-## Cambios de v1.4.1
 
-- Añade un botón de papelera junto a cada coincidencia en **Ver caché**.
-- La eliminación es individual, pide confirmación y fuerza una nueva búsqueda en la siguiente sincronización.
-- Bloquea la eliminación individual mientras hay una sincronización activa.
-- Registra en el historial cada coincidencia eliminada manualmente.
-- Los alias de AnimeAV1 amplían la búsqueda, pero ya no pueden aceptar por sí solos una entrada distinta.
-- Rechaza una serie base sin temporada frente a una secuela explícita, corrigiendo casos como `Seikon no Qwaser → Seikon no Qwaser II`.
-- La diferencia en el número de episodios solo sirve para ordenar candidatos: ya no invalida un título exacto, corrigiendo casos como `Mushoku Tensei II`.
-- Refuerza la selección de la serie principal frente a continuaciones o especiales, corrigiendo `ReLIFE → ReLIFE: Kanketsu-hen`.
+## Cambios de v1.4.2
 
-Mantén `DRY_RUN=true` durante la primera ejecución de esta versión.
+- Matcher de seguridad reescrito: el número de temporada nunca puede rescatar un título base distinto.
+- Búsqueda en MAL por título base y evaluación local de todos los candidatos.
+- Coincidencias exactas, coincidencias de título base y coincidencias difusas se validan por separado.
+- Las coincidencias difusas exigen similitud alta y solapamiento real de palabras.
+- Rechazo de secuelas explícitas contra entradas sin temporada.
+- Detección de temporadas expresadas como `2nd Season`, `Season 2`, números romanos o un número final.
+- Invalidación automática de coincidencias inseguras guardadas por versiones anteriores.
+- Umbrales predeterminados más conservadores: `BASE_TITLE_MATCH_THRESHOLD=88` y `TITLE_MATCH_THRESHOLD=88`.
+
+Mantén `DRY_RUN=true` durante la primera ejecución y revisa el listado completo antes de activar escrituras.
 
 Aplicación web en Go que lee la biblioteca de AnimeAV1 y sincroniza el progreso con MyAnimeList. AnimeAV1 se utiliza siempre como origen de solo lectura: la aplicación nunca escribe ni modifica datos allí.
 
 La imagen está preparada para `linux/arm/v7` y se puede ejecutar en un WD My Cloud EX4100 mediante Docker y Portainer Community Edition.
 
-## Cambios heredados de versiones anteriores
+## Cambios de la versión 1.4.2
 
 Esta versión corrige los fallos detectados durante la primera sincronización con caché:
 
@@ -104,7 +105,7 @@ Usa siempre una etiqueta fija en producción:
 ```yaml
 services:
   animeav1-mal-sync:
-    image: ovelayos/animeav1-mal-sync:v1.4.1
+    image: ovelayos/animeav1-mal-sync:v1.4.2
     container_name: animeav1-mal-sync
     restart: unless-stopped
     ports:
@@ -146,7 +147,7 @@ Publicación:
 
 El script:
 
-1. Pregunta la versión, por ejemplo `v1.4.1`.
+1. Pregunta la versión, por ejemplo `v1.4.2`.
 2. Valida el formato y comprueba que la etiqueta todavía no exista.
 3. Arranca `ssh-agent` cuando sea necesario y añade `~/.ssh/id_ed25519.pem` o la clave indicada.
 4. Verifica el remoto y que la rama local incluya los últimos cambios de `origin/main`.
@@ -158,7 +159,7 @@ El script:
 10. Construye una sola imagen ARMv7 y la publica con dos etiquetas:
 
 ```text
-ovelayos/animeav1-mal-sync:v1.4.1
+ovelayos/animeav1-mal-sync:v1.4.2
 ovelayos/animeav1-mal-sync:latest
 ```
 
@@ -180,7 +181,7 @@ Las dos etiquetas apuntan al mismo digest. Las versiones anteriores conservan su
 ## Publicación manual alternativa
 
 ```bash
-VERSION=v1.4.1
+VERSION=v1.4.2
 
 docker buildx build \
   --platform linux/arm/v7 \
@@ -190,3 +191,16 @@ docker buildx build \
 ```
 
 En Portainer utiliza la etiqueta fija de la versión y conserva siempre el volumen `animeav1-mal-data`.
+
+## Cambios de v1.4.2
+
+- Añade los botones **🔍**, **↻** y **🗑️** en el visor de caché para inspeccionar candidatos, recalcular una coincidencia y eliminarla.
+- Muestra para cada candidato de MAL la puntuación, episodios, tipo y motivo de aceptación o rechazo.
+- Añade `/data/aliases.json`, creado automáticamente con alias iniciales y editable sin reconstruir la imagen.
+- Los alias amplían la búsqueda, pero solo aceptan coincidencias exactas o de título base exacto y siguen respetando las reglas de temporada.
+- Separa explícitamente `Season 2` de `Part 2`: una parte no se trata como una temporada individual.
+- Corrige el `release.sh` para usar las credenciales persistentes de Docker Desktop sin solicitar el PAT en cada publicación.
+
+### Temporadas acumuladas divididas en partes
+
+Esta versión evita el falso positivo `Season 2 → Part 2`, pero todavía no escribe una entrada de AnimeAV1 sobre dos fichas MAL. Ese mapeo múltiple se mostrará como candidato para revisión y se incorporará en una versión posterior una vez validado con más casos reales.

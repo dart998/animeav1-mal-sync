@@ -112,8 +112,8 @@ git push origin "$BRANCH"
 git push origin "$VERSION"
 
 echo
-echo "Inicia sesión en Docker Hub si se solicita. Usa un Access Token como contraseña."
-docker login -u "$DOCKER_USER"
+echo "Usando las credenciales guardadas por Docker Desktop para Docker Hub."
+echo "Si el push falla por autenticación, ejecuta una sola vez: docker login -u $DOCKER_USER"
 
 if ! docker buildx inspect "$BUILDER" >/dev/null 2>&1; then
   docker buildx create --name "$BUILDER" --driver docker-container --use

@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	appVersion = "1.4.1"
+	appVersion = "1.4.2"
 	authURL    = "https://myanimelist.net/v1/oauth2/authorize"
 	tokenURL   = "https://myanimelist.net/v1/oauth2/token"
 	apiBase    = "https://api.myanimelist.net/v2"
@@ -184,6 +184,7 @@ func main() {
 	if err := os.MkdirAll(app.dataDir, 0755); err != nil {
 		log.Fatal(err)
 	}
+	app.ensureDefaultAliases()
 	app.load()
 	app.loadCache()
 
@@ -202,6 +203,8 @@ func main() {
 	mux.HandleFunc("/cache/clear", app.clearCacheHandler)
 	mux.HandleFunc("/api/cache", app.cacheAPI)
 	mux.HandleFunc("/api/cache/delete", app.deleteCacheEntryAPI)
+	mux.HandleFunc("/api/cache/candidates", app.cacheCandidatesAPI)
+	mux.HandleFunc("/api/cache/recompute", app.recomputeCacheEntryAPI)
 	mux.HandleFunc("/history/clear", app.clearHistoryHandler)
 	mux.HandleFunc("/oauth/start", app.oauthStart)
 	mux.HandleFunc("/oauth/callback", app.oauthCallback)
@@ -263,6 +266,22 @@ func (a *App) appendHistory(v any) {
 		defer f.Close()
 		f.Write(append(b, '\n'))
 	}
+}
+
+func (a *App) ensureDefaultAliases() {
+	path := filepath.Join(a.dataDir, "aliases.json")
+	if _, err := os.Stat(path); err == nil {
+		return
+	}
+	defaults := map[string][]string{
+		"Temple":                    {"TenPuru", "TenPuru: No One Can Live on Loneliness"},
+		"Mahou Shoujo ni Akogarete": {"Gushing over Magical Girls"},
+		"Futoku no Guild":           {"Immoral Guild"},
+		"Mayo Chiki!":               {"Mayo Chiki"},
+		"Seikon no Qwaser":          {"The Qwaser of Stigmata"},
+	}
+	b, _ := json.MarshalIndent(defaults, "", "  ")
+	_ = os.WriteFile(path, append(b, '\n'), 0600)
 }
 
 func (a *App) cachePath() string {
@@ -397,10 +416,12 @@ function updateProgress(x){const manual=x.running&&x.progress_trigger==='manual'
 async function pollStatus(){try{const r=await fetch('/api/status',{cache:'no-store'});const x=await r.json();lastData=x;runningText.textContent=x.running?'Sí':'No';lastStatus.textContent=x.last_status||'Nunca';found.textContent=x.last?.found??0;updated.textContent=x.last?.updated??0;errors.textContent=x.last?.errors??0;lastMessage.textContent=x.last?.message||'';cacheCount.textContent=x.cache_entries??0;updateProgress(x)}catch(e){}}
 async function pollLogs(){try{const r=await fetch('/api/logs',{cache:'no-store'});const x=await r.json();terminal.textContent=x.text||'Sin historial'}catch(e){}}
 function showModal(title,html){modalTitle.textContent=title;modalBody.innerHTML=html;modal.classList.add('open')} function closeModal(){modal.classList.remove('open')}
-function resultTable(items,cacheMode=false){if(!items.length)return '<p>Sin elementos.</p>';const actionHead=cacheMode?'<th aria-label="Acciones"></th>':'';return '<div class="table-wrap"><table><thead><tr><th>AnimeAV1</th><th>MAL</th><th>Puntos</th><th>Episodios</th><th>Resultado</th><th>Detalle</th>'+actionHead+'</tr></thead><tbody>'+items.map(i=>{const action=cacheMode?'<td><button type="button" class="danger trash-button" data-media-id="'+Number(i.media_id)+'" title="Eliminar esta coincidencia de la caché" aria-label="Eliminar coincidencia de '+esc(i.source_title)+'">🗑️</button></td>':'';return '<tr data-cache-row="'+Number(i.media_id)+'"><td>'+esc(i.source_title)+'</td><td>'+esc(i.mal_title||'—')+(i.mal_id?' <span class="muted">#'+i.mal_id+'</span>':'')+'</td><td>'+esc(i.match_score||'—')+'</td><td>'+esc(i.from)+' → '+esc(i.to)+'</td><td>'+esc(i.result)+'</td><td>'+esc(i.message||'')+'</td>'+action+'</tr>'}).join('')+'</tbody></table></div>'}
+function resultTable(items,cacheMode=false){if(!items.length)return '<p>Sin elementos.</p>';const actionHead=cacheMode?'<th aria-label="Acciones"></th>':'';return '<div class="table-wrap"><table><thead><tr><th>AnimeAV1</th><th>MAL</th><th>Puntos</th><th>Episodios</th><th>Resultado</th><th>Detalle</th>'+actionHead+'</tr></thead><tbody>'+items.map(i=>{const action=cacheMode?'<td style="white-space:nowrap"><button type="button" class="secondary inspect-button" data-media-id="'+Number(i.media_id)+'" title="Ver candidatos">🔍</button> <button type="button" class="secondary recompute-button" data-media-id="'+Number(i.media_id)+'" title="Recalcular coincidencia">↻</button> <button type="button" class="danger trash-button" data-media-id="'+Number(i.media_id)+'" title="Eliminar esta coincidencia de la caché" aria-label="Eliminar coincidencia de '+esc(i.source_title)+'">🗑️</button></td>':'';return '<tr data-cache-row="'+Number(i.media_id)+'"><td>'+esc(i.source_title)+'</td><td>'+esc(i.mal_title||'—')+(i.mal_id?' <span class="muted">#'+i.mal_id+'</span>':'')+'</td><td>'+esc(i.match_score||'—')+'</td><td>'+esc(i.from)+' → '+esc(i.to)+'</td><td>'+esc(i.result)+'</td><td>'+esc(i.message||'')+'</td>'+action+'</tr>'}).join('')+'</tbody></table></div>'}
 function openResults(kind){const items=lastData?.last?.items||[];const filtered=kind==='all'?items:items.filter(i=>i.result===kind);showModal(kind==='all'?'Coincidencias de la última ejecución':kind==='updated'?'Actualizados':'Errores',resultTable(filtered))}
 async function deleteCacheMatch(mediaID,title){if(!confirm('¿Eliminar de la caché la coincidencia de "'+title+'"? En la siguiente sincronización se buscará de nuevo.'))return;try{const r=await fetch('/api/cache/delete',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'media_id='+encodeURIComponent(mediaID)});const x=await r.json().catch(()=>({}));if(!r.ok)throw new Error(x.error||'No se pudo eliminar');await openCache();await pollStatus()}catch(e){alert(e.message||'No se pudo eliminar la coincidencia')}}
-async function openCache(){try{const r=await fetch('/api/cache',{cache:'no-store'});const x=await r.json();const items=(x.items||[]).map(i=>({media_id:i.media_id,source_title:i.source_title,mal_title:i.mal_title,mal_id:i.mal_id,match_score:i.match_score,from:i.mal_seen,to:i.source_seen,result:'cache',message:'Validado: '+(i.last_validated?new Date(i.last_validated*1000).toLocaleString():'—')}));showModal('Caché ('+items.length+')',resultTable(items,true));document.querySelectorAll('.trash-button').forEach(b=>b.addEventListener('click',()=>{const row=b.closest('tr');deleteCacheMatch(b.dataset.mediaId,row?.children[0]?.textContent||'esta entrada')}))}catch(e){showModal('Caché','<p>Error al cargar la caché.</p>')}}
+async function inspectCacheMatch(mediaID){showModal('Candidatos','<p>Buscando candidatos en MAL…</p>');try{const r=await fetch('/api/cache/candidates?media_id='+encodeURIComponent(mediaID),{cache:'no-store'});const x=await r.json();if(!r.ok)throw new Error(x.error||'No se pudo consultar');const rows=(x.items||[]).map(i=>'<tr><td>'+esc(i.mal_title)+' <span class="muted">#'+i.mal_id+'</span></td><td>'+esc(i.score)+'</td><td>'+esc(i.episodes||'—')+'</td><td>'+esc(i.media_type||'—')+'</td><td class="'+(i.accepted?'ok':'bad')+'">'+esc(i.reason)+'</td></tr>').join('');showModal('Candidatos: '+x.source_title,'<div class="table-wrap"><table><thead><tr><th>MAL</th><th>Puntos</th><th>Episodios</th><th>Tipo</th><th>Diagnóstico</th></tr></thead><tbody>'+rows+'</tbody></table></div>')}catch(e){showModal('Candidatos','<p>'+esc(e.message)+'</p>')}}
+async function recomputeCacheMatch(mediaID){if(!confirm('¿Recalcular esta coincidencia ahora?'))return;try{const r=await fetch('/api/cache/recompute',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'media_id='+encodeURIComponent(mediaID)});const x=await r.json();if(!r.ok||!x.ok)throw new Error(x.error||'No se pudo recalcular');await openCache();await pollStatus()}catch(e){alert(e.message)}}
+async function openCache(){try{const r=await fetch('/api/cache',{cache:'no-store'});const x=await r.json();const items=(x.items||[]).map(i=>({media_id:i.media_id,source_title:i.source_title,mal_title:i.mal_title,mal_id:i.mal_id,match_score:i.match_score,from:i.mal_seen,to:i.source_seen,result:'cache',message:'Validado: '+(i.last_validated?new Date(i.last_validated*1000).toLocaleString():'—')}));showModal('Caché ('+items.length+')',resultTable(items,true));document.querySelectorAll('.trash-button').forEach(b=>b.addEventListener('click',()=>{const row=b.closest('tr');deleteCacheMatch(b.dataset.mediaId,row?.children[0]?.textContent||'esta entrada')}));document.querySelectorAll('.inspect-button').forEach(b=>b.addEventListener('click',()=>inspectCacheMatch(b.dataset.mediaId)));document.querySelectorAll('.recompute-button').forEach(b=>b.addEventListener('click',()=>recomputeCacheMatch(b.dataset.mediaId)))}catch(e){showModal('Caché','<p>Error al cargar la caché.</p>')}}
 updateProgress({running:initial.running,progress_processed:initial.processed,progress_total:initial.total,progress_message:initial.message,progress_trigger:initial.trigger});setInterval(pollStatus,1000);setInterval(pollLogs,2000);pollStatus();pollLogs();
 </script></body></html>`, appVersion, cookieStatus, html.EscapeString(st.Settings.Cookie), malStatus, st.Settings.IntervalMinutes, checked(st.Settings.DryRun), checked(st.Settings.OnlyIncrease), checked(st.Settings.AutoSync), a.cacheCount(), runText, html.EscapeString(lastStatus), st.Last.Found, st.Last.Updated, st.Last.Errors, html.EscapeString(st.Last.Message), terminal, running, processed, total, progressMessage, progressTrigger)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -919,14 +940,31 @@ func similarity(a, b string) int {
 	}
 	return 100 - (dist * 100 / max)
 }
-func candidateTitles(it AVItem) []string {
+func (a *App) candidateTitles(it AVItem) []string {
 	out := []string{it.Title}
 	seen := map[string]bool{normalize(it.Title): true}
-	for _, v := range it.Aliases {
+	add := func(v string) {
 		n := normalize(v)
 		if n != "" && !seen[n] {
 			seen[n] = true
 			out = append(out, v)
+		}
+	}
+	for _, v := range it.Aliases {
+		add(v)
+	}
+	// aliases.json es opcional y solo amplía búsquedas; nunca fuerza una aceptación insegura.
+	b, err := os.ReadFile(filepath.Join(a.dataDir, "aliases.json"))
+	if err == nil {
+		var aliases map[string][]string
+		if json.Unmarshal(b, &aliases) == nil {
+			for key, values := range aliases {
+				if normalize(key) == normalize(it.Title) {
+					for _, v := range values {
+						add(v)
+					}
+				}
+			}
 		}
 	}
 	return out
@@ -1025,6 +1063,20 @@ func seasonNumber(title string) int {
 	return 0
 }
 
+func partNumber(title string) int {
+	n := strings.ToLower(title)
+	if m := regexp.MustCompile(`\bpart\s*([1-9][0-9]*)\b`).FindStringSubmatch(n); len(m) == 2 {
+		v, _ := strconv.Atoi(m[1])
+		return v
+	}
+	return 0
+}
+
+func hasSeasonMarker(title string) bool {
+	n := strings.ToLower(title)
+	return regexp.MustCompile(`\bseason\s*[1-9][0-9]*\b|\b[1-9][0-9]*(?:st|nd|rd|th)\s+season\b`).MatchString(n) || regexp.MustCompile(`(?i)(?:^|\s)(II|III|IV|V|VI|VII|VIII|IX|X)(?:\s*[:\-]|$)`).MatchString(title)
+}
+
 func seasonMismatch(source, candidate string) bool {
 	a, b := seasonNumber(source), seasonNumber(candidate)
 	return a > 0 && b > 0 && a != b
@@ -1116,7 +1168,16 @@ func evaluateTitlePair(source, candidate string, primary bool) (titleMatch, bool
 		return titleMatch{}, false
 	}
 	sn, cn := seasonNumber(source), seasonNumber(candidate)
+	sp, cp := partNumber(source), partNumber(candidate)
 	fullExact := normalize(source) == normalize(candidate)
+	// Part 2 es la segunda mitad de una temporada, no la temporada 2. Nunca se
+	// intercambian de forma automática como una coincidencia individual.
+	if !fullExact && hasSeasonMarker(source) && cp > 0 && sp == 0 && !hasSeasonMarker(candidate) {
+		return titleMatch{}, false
+	}
+	if !fullExact && sp > 0 && hasSeasonMarker(candidate) && cp == 0 && !hasSeasonMarker(source) {
+		return titleMatch{}, false
+	}
 	baseExact := baseTitle(source) == baseTitle(candidate)
 	// Una secuela explícita nunca puede emparejarse con una entrada sin temporada,
 	// salvo que el título completo sea idéntico.
@@ -1164,7 +1225,7 @@ func maxInt(a, b int) int {
 func (a *App) resolve(ctx context.Context, it AVItem) (MALAnime, int, error) {
 	ids := map[int]string{}
 	var searchErr error
-	for _, title := range candidateTitles(it) {
+	for _, title := range a.candidateTitles(it) {
 		if isGenericTitle(title) {
 			continue
 		}
@@ -1198,10 +1259,18 @@ func (a *App) resolve(ctx context.Context, it AVItem) (MALAnime, int, error) {
 		// La coincidencia debe ser segura usando el título principal de AnimeAV1.
 		// Los alias sirven para ampliar la búsqueda, pero nunca pueden rescatar por sí
 		// solos una película, especial, secuela o entrada distinta.
-		for _, malTitle := range animeTitles(anime) {
-			m, ok := evaluateTitlePair(it.Title, malTitle, true)
-			if ok && (!matched || m.score > tm.score || (m.score == tm.score && m.baseScore > tm.baseScore)) {
-				tm, matched = m, true
+		for _, sourceTitle := range a.candidateTitles(it) {
+			primary := normalize(sourceTitle) == normalize(it.Title)
+			for _, malTitle := range animeTitles(anime) {
+				m, ok := evaluateTitlePair(sourceTitle, malTitle, primary)
+				// Los alias solo pueden aceptar coincidencias exactas o de base exacta y
+				// jamás saltarse las reglas de temporada/parte.
+				if !primary && ok && normalize(sourceTitle) != normalize(malTitle) && baseTitle(sourceTitle) != baseTitle(malTitle) {
+					ok = false
+				}
+				if ok && (!matched || m.score > tm.score || (m.score == tm.score && m.baseScore > tm.baseScore)) {
+					tm, matched = m, true
+				}
 			}
 		}
 		if !matched {
@@ -1684,6 +1753,123 @@ func (a *App) deleteCacheEntryAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	a.appendHistory(map[string]any{"ts": time.Now().Unix(), "event": "cache_entry_deleted", "media_id": mediaID, "source_title": entry.SourceTitle, "mal_id": entry.MALID, "mal_title": entry.MALTitle, "message": "Coincidencia eliminada manualmente de la caché"})
 	json.NewEncoder(w).Encode(map[string]any{"ok": true, "media_id": mediaID, "count": a.cacheCount()})
+}
+
+type candidateDebug struct {
+	MALID     int    `json:"mal_id"`
+	MALTitle  string `json:"mal_title"`
+	Score     int    `json:"score"`
+	Accepted  bool   `json:"accepted"`
+	Reason    string `json:"reason"`
+	Episodes  int    `json:"episodes"`
+	MediaType string `json:"media_type"`
+}
+
+func (a *App) inspectCandidates(ctx context.Context, it AVItem) ([]candidateDebug, error) {
+	ids := map[int]bool{}
+	var lastErr error
+	for _, title := range a.candidateTitles(it) {
+		for _, query := range searchQueries(title) {
+			var sr MALSearch
+			if err := a.malRequestContext(ctx, "GET", "/anime?q="+url.QueryEscape(query)+"&limit=10", nil, &sr); err != nil {
+				lastErr = err
+				continue
+			}
+			for _, x := range sr.Data {
+				ids[x.Node.ID] = true
+			}
+		}
+	}
+	out := make([]candidateDebug, 0, len(ids))
+	for id := range ids {
+		var anime MALAnime
+		if err := a.malRequestContext(ctx, "GET", fmt.Sprintf("/anime/%d?fields=id,title,alternative_titles,num_episodes,media_type,start_date", id), nil, &anime); err != nil {
+			continue
+		}
+		best := -1
+		reason := "título/base insuficiente"
+		for _, sourceTitle := range a.candidateTitles(it) {
+			primary := normalize(sourceTitle) == normalize(it.Title)
+			for _, malTitle := range animeTitles(anime) {
+				m, ok := evaluateTitlePair(sourceTitle, malTitle, primary)
+				if ok && m.score > best {
+					best = m.score
+					reason = "coincidencia aceptable"
+				}
+			}
+		}
+		if hasSeasonMarker(it.Title) && partNumber(anime.Title) > 0 && !hasSeasonMarker(anime.Title) {
+			reason = "rechazado: Part 2 no equivale a Season 2"
+			best = -1
+		}
+		out = append(out, candidateDebug{MALID: anime.ID, MALTitle: anime.Title, Score: best, Accepted: best >= getenvInt("TITLE_MATCH_THRESHOLD", 88), Reason: reason, Episodes: anime.NumEpisodes, MediaType: anime.MediaType})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Accepted != out[j].Accepted {
+			return out[i].Accepted
+		}
+		return out[i].Score > out[j].Score
+	})
+	if len(out) == 0 && lastErr != nil {
+		return nil, lastErr
+	}
+	return out, nil
+}
+
+func (a *App) cacheCandidatesAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	mediaID, _ := strconv.Atoi(r.URL.Query().Get("media_id"))
+	entry, ok := a.cacheGet(mediaID)
+	if !ok {
+		http.Error(w, "entrada no encontrada", http.StatusNotFound)
+		return
+	}
+	it := AVItem{MediaID: entry.MediaID, Title: entry.SourceTitle, Seen: entry.SourceSeen, Total: entry.SourceTotal, Status: entry.SourceStatus}
+	items, err := a.inspectCandidates(r.Context(), it)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]any{"source_title": entry.SourceTitle, "items": items})
+}
+
+func (a *App) recomputeCacheEntryAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST", http.StatusMethodNotAllowed)
+		return
+	}
+	a.mu.Lock()
+	running := a.running
+	a.mu.Unlock()
+	if running {
+		http.Error(w, "detén la sincronización antes de recalcular", http.StatusConflict)
+		return
+	}
+	mediaID, _ := strconv.Atoi(r.FormValue("media_id"))
+	old, ok := a.cacheGet(mediaID)
+	if !ok {
+		http.Error(w, "entrada no encontrada", http.StatusNotFound)
+		return
+	}
+	it := AVItem{MediaID: old.MediaID, Title: old.SourceTitle, Seen: old.SourceSeen, Total: old.SourceTotal, Status: old.SourceStatus}
+	anime, score, err := a.resolve(r.Context(), it)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	seen, status := animeState(anime)
+	entry := old
+	entry.MALID = anime.ID
+	entry.MALTitle = anime.Title
+	entry.MatchScore = score
+	entry.MALSeen = seen
+	entry.MALStatus = status
+	entry.LastValidated = time.Now().Unix()
+	entry.UpdatedAt = time.Now().Unix()
+	a.cachePut(entry)
+	a.appendHistory(map[string]any{"ts": time.Now().Unix(), "event": "cache_entry_recomputed", "media_id": mediaID, "source_title": entry.SourceTitle, "mal_id": entry.MALID, "mal_title": entry.MALTitle, "message": "Coincidencia recalculada manualmente"})
+	json.NewEncoder(w).Encode(map[string]any{"ok": true, "entry": entry})
 }
 
 func (a *App) clearHistoryHandler(w http.ResponseWriter, r *http.Request) {
