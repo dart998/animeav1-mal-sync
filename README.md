@@ -1,13 +1,14 @@
 # AnimeAV1 → MyAnimeList Sync
 
-## Cambios de v1.5.1
+## Cambios de v1.5.2
 
-- Restaura y hace visible el botón **Detener sincronización** durante cualquier ejecución.
-- Corrige falsos negativos en títulos exactos y alias exactos.
+- Mantiene el botón **Detener sincronización** durante cualquier ejecución.
 - Detecta temporadas unificadas en AnimeAV1 y partidas en MAL como `Título` + `Título Part 2`.
 - Reparte el progreso secuencialmente: primero completa la parte 1 y pasa el excedente a la parte 2.
-- Guarda ambos IDs de MAL en la caché y muestra el mapeo doble en la interfaz.
-- Respeta `Solo aumentar episodios` de forma independiente para cada parte.
+- Endurece la detección: la segunda ficha solo se acepta cuando, al retirar únicamente `Part 2`, conserva exactamente el título de la primera ficha o uno de sus títulos alternativos.
+- Conserva el número de temporada y exige el mismo `media_type` cuando MAL proporciona ese dato.
+- Invalida emparejamientos dobles inseguros guardados por v1.5.1, incluidos `Mushoku Tensei` + `86 Part 2` y `Kill la Kill` + `Luv(sic) Part 2`.
+- Guarda ambos IDs de MAL en la caché y respeta `Solo aumentar episodios` independientemente en cada parte.
 
 ## Cambios principales
 

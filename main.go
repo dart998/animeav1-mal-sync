@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	appVersion = "1.5.1"
+	appVersion = "1.5.2"
 	authURL    = "https://myanimelist.net/v1/oauth2/authorize"
 	tokenURL   = "https://myanimelist.net/v1/oauth2/token"
 	apiBase    = "https://api.myanimelist.net/v2"
@@ -1344,11 +1344,53 @@ func (a *App) resolve(ctx context.Context, it AVItem) (MALAnime, int, error) {
 	return best, bestScore, nil
 }
 
-func sameLogicalBase(a, b string) bool {
-	if baseTitle(a) == baseTitle(b) {
-		return true
+func stripPartMarker(title string) string {
+	s := strings.TrimSpace(title)
+	// Para detectar un cour dividido solo eliminamos el marcador de parte. No
+	// eliminamos temporada, números romanos ni números finales, porque forman
+	// parte de la identidad de la serie/temporada.
+	patterns := []string{
+		`(?i)\s*[:\-–—]?\s*\bpart\s*2\b\s*$`,
+		`(?i)\s*[:\-–—]?\s*\b2(?:nd)?\s+part\b\s*$`,
 	}
-	return similarity(baseTitle(a), baseTitle(b)) >= 94 && tokenOverlap(a, b) >= 75
+	for _, pattern := range patterns {
+		s = regexp.MustCompile(pattern).ReplaceAllString(s, "")
+	}
+	return strings.TrimSpace(regexp.MustCompile(`\s+`).ReplaceAllString(s, " "))
+}
+
+func validSplitTitlePair(firstTitle, secondTitle string) bool {
+	if partNumber(secondTitle) != 2 || partNumber(firstTitle) != 0 {
+		return false
+	}
+	stripped := stripPartMarker(secondTitle)
+	if stripped == "" {
+		return false
+	}
+	// Regla deliberadamente estricta: el título de la segunda ficha debe ser el
+	// mismo título de la primera tras retirar únicamente "Part 2". Los títulos
+	// alternativos se comparan entre sí en validSplitPair.
+	return normalize(firstTitle) == normalize(stripped)
+}
+
+func validSplitPair(first, second MALAnime) bool {
+	if first.ID == 0 || second.ID == 0 || first.ID == second.ID || second.NumEpisodes <= 0 {
+		return false
+	}
+	if first.MediaType != "" && second.MediaType != "" && first.MediaType != second.MediaType {
+		return false
+	}
+	for _, ft := range animeTitles(first) {
+		if strings.TrimSpace(ft) == "" {
+			continue
+		}
+		for _, st := range animeTitles(second) {
+			if strings.TrimSpace(st) != "" && validSplitTitlePair(ft, st) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // resolveSplitPart2 localiza una segunda ficha MAL cuando AnimeAV1 agrupa en una
@@ -1388,19 +1430,7 @@ func (a *App) resolveSplitPart2(ctx context.Context, it AVItem, first MALAnime) 
 		if partNumber(anime.Title) != 2 || anime.NumEpisodes <= 0 {
 			continue
 		}
-		logical := false
-		for _, ft := range animeTitles(first) {
-			for _, ct := range animeTitles(anime) {
-				if sameLogicalBase(ft, ct) {
-					logical = true
-					break
-				}
-			}
-			if logical {
-				break
-			}
-		}
-		if !logical {
+		if !validSplitPair(first, anime) {
 			continue
 		}
 		combined := first.NumEpisodes + anime.NumEpisodes
@@ -1742,6 +1772,13 @@ func (a *App) runSync(trigger string) {
 					break
 				}
 				anime2 = MALAnime{}
+			} else if !validSplitPair(anime, anime2) {
+				// Descarta emparejamientos peligrosos guardados por 1.5.1, como
+				// Mushoku Tensei + 86 Part 2 o Kill la Kill + Luv(sic) Part 2.
+				anime2 = MALAnime{}
+				cache.MALID2 = 0
+				cache.MALTitle2 = ""
+				cache.MatchType = ""
 			}
 		}
 		if anime2.ID == 0 && it.Total > anime.NumEpisodes && anime.NumEpisodes > 0 {
