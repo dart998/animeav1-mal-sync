@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	appVersion = "1.5.1"
+	appVersion = "1.5.0"
 	authURL    = "https://myanimelist.net/v1/oauth2/authorize"
 	tokenURL   = "https://myanimelist.net/v1/oauth2/token"
 	apiBase    = "https://api.myanimelist.net/v2"
@@ -52,8 +52,6 @@ type RunItem struct {
 	SourceTitle string `json:"source_title"`
 	MALID       int    `json:"mal_id,omitempty"`
 	MALTitle    string `json:"mal_title,omitempty"`
-	MALID2      int    `json:"mal_id_2,omitempty"`
-	MALTitle2   string `json:"mal_title_2,omitempty"`
 	MatchScore  int    `json:"match_score,omitempty"`
 	From        int    `json:"from,omitempty"`
 	To          int    `json:"to,omitempty"`
@@ -105,12 +103,6 @@ type CacheEntry struct {
 	MediaID        int    `json:"media_id"`
 	MALID          int    `json:"mal_id"`
 	MALTitle       string `json:"mal_title"`
-	MALID2         int    `json:"mal_id_2,omitempty"`
-	MALTitle2      string `json:"mal_title_2,omitempty"`
-	MAL2Episodes   int    `json:"mal_2_episodes,omitempty"`
-	MAL2Seen       int    `json:"mal_2_seen,omitempty"`
-	MAL2Status     string `json:"mal_2_status,omitempty"`
-	MatchType      string `json:"match_type,omitempty"`
 	MatchScore     int    `json:"match_score"`
 	SourceTitle    string `json:"source_title"`
 	SourceSeen     int    `json:"source_seen"`
@@ -423,16 +415,16 @@ body{font-family:Arial,sans-serif;background:#111827;color:#e5e7eb;max-width:100
 <script>
 let lastData=null; const initial={running:%t,processed:%d,total:%d,message:%q,trigger:%q};
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-function updateProgress(x){const manual=!!x.running;progressWrap.style.display=manual?'block':'none';stopButton.style.display=manual?'inline-block':'none';clearCacheButton.disabled=!!x.running;if(manual){const pct=x.progress_total?Math.min(100,Math.floor(x.progress_processed*100/x.progress_total)):0;progressBar.style.width=pct+'%%';progressLabel.textContent=(x.progress_message||'Sincronizando')+' · '+x.progress_processed+'/'+x.progress_total+' ('+pct+'%%)'}}
+function updateProgress(x){const manual=x.running&&x.progress_trigger==='manual';progressWrap.style.display=manual?'block':'none';stopButton.style.display=manual?'inline-block':'none';clearCacheButton.disabled=!!x.running;if(manual){const pct=x.progress_total?Math.min(100,Math.floor(x.progress_processed*100/x.progress_total)):0;progressBar.style.width=pct+'%%';progressLabel.textContent=(x.progress_message||'Sincronizando')+' · '+x.progress_processed+'/'+x.progress_total+' ('+pct+'%%)'}}
 async function pollStatus(){try{const r=await fetch('/api/status',{cache:'no-store'});const x=await r.json();lastData=x;runningText.textContent=x.running?'Sí':'No';lastStatus.textContent=x.last_status||'Nunca';found.textContent=x.last?.found??0;updated.textContent=x.last?.updated??0;errors.textContent=x.last?.errors??0;lastMessage.textContent=x.last?.message||'';cacheCount.textContent=x.cache_entries??0;updateProgress(x)}catch(e){}}
 async function pollLogs(){try{const r=await fetch('/api/logs',{cache:'no-store'});const x=await r.json();terminal.textContent=x.text||'Sin historial'}catch(e){}}
 function showModal(title,html){modalTitle.textContent=title;modalBody.innerHTML=html;modal.classList.add('open')} function closeModal(){modal.classList.remove('open')}
-function resultTable(items,cacheMode=false){if(!items.length)return '<p>Sin elementos.</p>';const actionHead=cacheMode?'<th aria-label="Acciones"></th>':'';return '<div class="table-wrap"><table><thead><tr><th>AnimeAV1</th><th>MAL</th><th>Puntos</th><th>Episodios</th><th>Resultado</th><th>Detalle</th>'+actionHead+'</tr></thead><tbody>'+items.map(i=>{const action=cacheMode?'<td style="white-space:nowrap"><button type="button" class="secondary inspect-button" data-media-id="'+Number(i.media_id)+'" title="Ver candidatos">🔍</button> <button type="button" class="secondary recompute-button" data-media-id="'+Number(i.media_id)+'" title="Recalcular coincidencia">↻</button> <button type="button" class="danger trash-button" data-media-id="'+Number(i.media_id)+'" title="Eliminar esta coincidencia de la caché" aria-label="Eliminar coincidencia de '+esc(i.source_title)+'">🗑️</button></td>':'';return '<tr data-cache-row="'+Number(i.media_id)+'"><td>'+esc(i.source_title)+'</td><td>'+esc(i.mal_title||'—')+(i.mal_id?' <span class="muted">#'+i.mal_id+'</span>':'')+(i.mal_title_2?'<br>↳ '+esc(i.mal_title_2)+(i.mal_id_2?' <span class="muted">#'+i.mal_id_2+'</span>':''):'')+'</td><td>'+esc(i.match_score||'—')+'</td><td>'+esc(i.from)+' → '+esc(i.to)+'</td><td>'+esc(i.result)+'</td><td>'+esc(i.message||'')+'</td>'+action+'</tr>'}).join('')+'</tbody></table></div>'}
+function resultTable(items,cacheMode=false){if(!items.length)return '<p>Sin elementos.</p>';const actionHead=cacheMode?'<th aria-label="Acciones"></th>':'';return '<div class="table-wrap"><table><thead><tr><th>AnimeAV1</th><th>MAL</th><th>Puntos</th><th>Episodios</th><th>Resultado</th><th>Detalle</th>'+actionHead+'</tr></thead><tbody>'+items.map(i=>{const action=cacheMode?'<td style="white-space:nowrap"><button type="button" class="secondary inspect-button" data-media-id="'+Number(i.media_id)+'" title="Ver candidatos">🔍</button> <button type="button" class="secondary recompute-button" data-media-id="'+Number(i.media_id)+'" title="Recalcular coincidencia">↻</button> <button type="button" class="danger trash-button" data-media-id="'+Number(i.media_id)+'" title="Eliminar esta coincidencia de la caché" aria-label="Eliminar coincidencia de '+esc(i.source_title)+'">🗑️</button></td>':'';return '<tr data-cache-row="'+Number(i.media_id)+'"><td>'+esc(i.source_title)+'</td><td>'+esc(i.mal_title||'—')+(i.mal_id?' <span class="muted">#'+i.mal_id+'</span>':'')+'</td><td>'+esc(i.match_score||'—')+'</td><td>'+esc(i.from)+' → '+esc(i.to)+'</td><td>'+esc(i.result)+'</td><td>'+esc(i.message||'')+'</td>'+action+'</tr>'}).join('')+'</tbody></table></div>'}
 function openResults(kind){const items=lastData?.last?.items||[];const filtered=kind==='all'?items:items.filter(i=>i.result===kind);showModal(kind==='all'?'Coincidencias de la última ejecución':kind==='updated'?'Actualizados':'Errores',resultTable(filtered))}
 async function deleteCacheMatch(mediaID,title){if(!confirm('¿Eliminar de la caché la coincidencia de "'+title+'"? En la siguiente sincronización se buscará de nuevo.'))return;try{const r=await fetch('/api/cache/delete',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'media_id='+encodeURIComponent(mediaID)});const x=await r.json().catch(()=>({}));if(!r.ok)throw new Error(x.error||'No se pudo eliminar');await openCache();await pollStatus()}catch(e){alert(e.message||'No se pudo eliminar la coincidencia')}}
 async function inspectCacheMatch(mediaID){showModal('Candidatos','<p>Buscando candidatos en MAL…</p>');try{const r=await fetch('/api/cache/candidates?media_id='+encodeURIComponent(mediaID),{cache:'no-store'});const x=await r.json();if(!r.ok)throw new Error(x.error||'No se pudo consultar');const rows=(x.items||[]).map(i=>'<tr><td>'+esc(i.mal_title)+' <span class="muted">#'+i.mal_id+'</span></td><td>'+esc(i.score)+'</td><td>'+esc(i.episodes||'—')+'</td><td>'+esc(i.media_type||'—')+'</td><td class="'+(i.accepted?'ok':'bad')+'">'+esc(i.reason)+'</td></tr>').join('');showModal('Candidatos: '+x.source_title,'<div class="table-wrap"><table><thead><tr><th>MAL</th><th>Puntos</th><th>Episodios</th><th>Tipo</th><th>Diagnóstico</th></tr></thead><tbody>'+rows+'</tbody></table></div>')}catch(e){showModal('Candidatos','<p>'+esc(e.message)+'</p>')}}
 async function recomputeCacheMatch(mediaID){if(!confirm('¿Recalcular esta coincidencia ahora?'))return;try{const r=await fetch('/api/cache/recompute',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'media_id='+encodeURIComponent(mediaID)});const x=await r.json();if(!r.ok||!x.ok)throw new Error(x.error||'No se pudo recalcular');await openCache();await pollStatus()}catch(e){alert(e.message)}}
-async function openCache(){try{const r=await fetch('/api/cache',{cache:'no-store'});const x=await r.json();const items=(x.items||[]).map(i=>({media_id:i.media_id,source_title:i.source_title,mal_title:i.mal_title,mal_id:i.mal_id,mal_title_2:i.mal_title_2,mal_id_2:i.mal_id_2,match_score:i.match_score,from:i.mal_seen,to:i.source_seen,result:'cache',message:'Validado: '+(i.last_validated?new Date(i.last_validated*1000).toLocaleString():'—')}));showModal('Caché ('+items.length+')',resultTable(items,true));document.querySelectorAll('.trash-button').forEach(b=>b.addEventListener('click',()=>{const row=b.closest('tr');deleteCacheMatch(b.dataset.mediaId,row?.children[0]?.textContent||'esta entrada')}));document.querySelectorAll('.inspect-button').forEach(b=>b.addEventListener('click',()=>inspectCacheMatch(b.dataset.mediaId)));document.querySelectorAll('.recompute-button').forEach(b=>b.addEventListener('click',()=>recomputeCacheMatch(b.dataset.mediaId)))}catch(e){showModal('Caché','<p>Error al cargar la caché.</p>')}}
+async function openCache(){try{const r=await fetch('/api/cache',{cache:'no-store'});const x=await r.json();const items=(x.items||[]).map(i=>({media_id:i.media_id,source_title:i.source_title,mal_title:i.mal_title,mal_id:i.mal_id,match_score:i.match_score,from:i.mal_seen,to:i.source_seen,result:'cache',message:'Validado: '+(i.last_validated?new Date(i.last_validated*1000).toLocaleString():'—')}));showModal('Caché ('+items.length+')',resultTable(items,true));document.querySelectorAll('.trash-button').forEach(b=>b.addEventListener('click',()=>{const row=b.closest('tr');deleteCacheMatch(b.dataset.mediaId,row?.children[0]?.textContent||'esta entrada')}));document.querySelectorAll('.inspect-button').forEach(b=>b.addEventListener('click',()=>inspectCacheMatch(b.dataset.mediaId)));document.querySelectorAll('.recompute-button').forEach(b=>b.addEventListener('click',()=>recomputeCacheMatch(b.dataset.mediaId)))}catch(e){showModal('Caché','<p>Error al cargar la caché.</p>')}}
 updateProgress({running:initial.running,progress_processed:initial.processed,progress_total:initial.total,progress_message:initial.message,progress_trigger:initial.trigger});setInterval(pollStatus,1000);setInterval(pollLogs,2000);pollStatus();pollLogs();
 </script></body></html>`, appVersion, cookieStatus, html.EscapeString(st.Settings.Cookie), malStatus, st.Settings.IntervalMinutes, checked(st.Settings.DryRun), checked(st.Settings.OnlyIncrease), checked(st.Settings.AutoSync), a.cacheCount(), runText, html.EscapeString(lastStatus), st.Last.Found, st.Last.Updated, st.Last.Errors, html.EscapeString(st.Last.Message), terminal, running, processed, total, progressMessage, progressTrigger)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1199,12 +1191,6 @@ func evaluateTitlePair(source, candidate string, primary bool) (titleMatch, bool
 	if isGenericTitle(source) || isGenericTitle(candidate) {
 		return titleMatch{}, false
 	}
-	// Una coincidencia exacta normalizada siempre es segura, también cuando el
-	// nombre procede de un alias de AnimeAV1 o de un título alternativo de MAL.
-	// Se evalúa antes de las heurísticas de temporadas para evitar falsos negativos.
-	if normalize(source) == normalize(candidate) {
-		return titleMatch{score: 120 - variantPenalty(source, candidate), baseScore: 100, source: source, candidate: candidate}, true
-	}
 	if seasonMismatch(source, candidate) {
 		return titleMatch{}, false
 	}
@@ -1344,128 +1330,6 @@ func (a *App) resolve(ctx context.Context, it AVItem) (MALAnime, int, error) {
 	return best, bestScore, nil
 }
 
-func sameLogicalBase(a, b string) bool {
-	if baseTitle(a) == baseTitle(b) {
-		return true
-	}
-	return similarity(baseTitle(a), baseTitle(b)) >= 94 && tokenOverlap(a, b) >= 75
-}
-
-// resolveSplitPart2 localiza una segunda ficha MAL cuando AnimeAV1 agrupa en una
-// sola entrada una temporada que MAL publicó en dos cours. No confunde Season 2
-// con Part 2: la primera ficha ya debe haber sido elegida y la segunda debe llevar
-// explícitamente "Part 2", compartir la misma base y completar el total esperado.
-func (a *App) resolveSplitPart2(ctx context.Context, it AVItem, first MALAnime) (MALAnime, int, error) {
-	if first.ID == 0 || first.NumEpisodes <= 0 || it.Total <= first.NumEpisodes {
-		return MALAnime{}, 0, nil
-	}
-	ids := map[int]bool{}
-	queries := []string{first.Title + " Part 2", baseTitleDisplay(first.Title) + " Part 2"}
-	for _, t := range animeTitles(first) {
-		if strings.TrimSpace(t) != "" {
-			queries = append(queries, t+" Part 2")
-		}
-	}
-	for _, q := range queries {
-		var sr MALSearch
-		if err := a.malRequestContext(ctx, "GET", "/anime?q="+url.QueryEscape(truncateRunes(q, 64))+"&limit=100", nil, &sr); err != nil {
-			continue
-		}
-		for _, x := range sr.Data {
-			ids[x.Node.ID] = true
-		}
-	}
-	bestScore := -1
-	var best MALAnime
-	for id := range ids {
-		if id == first.ID {
-			continue
-		}
-		var anime MALAnime
-		if err := a.malRequestContext(ctx, "GET", fmt.Sprintf("/anime/%d?fields=id,title,alternative_titles,num_episodes,media_type,start_date,my_list_status", id), nil, &anime); err != nil {
-			continue
-		}
-		if partNumber(anime.Title) != 2 || anime.NumEpisodes <= 0 {
-			continue
-		}
-		logical := false
-		for _, ft := range animeTitles(first) {
-			for _, ct := range animeTitles(anime) {
-				if sameLogicalBase(ft, ct) {
-					logical = true
-					break
-				}
-			}
-			if logical {
-				break
-			}
-		}
-		if !logical {
-			continue
-		}
-		combined := first.NumEpisodes + anime.NumEpisodes
-		// Aceptamos totales iguales o una ficha aún en emisión con total desconocido
-		// en AnimeAV1; nunca aceptamos una suma inferior a los episodios vistos.
-		if combined < it.Seen {
-			continue
-		}
-		diff := int(math.Abs(float64(combined - it.Total)))
-		score := 110 - diff
-		if combined == it.Total {
-			score += 10
-		}
-		if score > bestScore {
-			bestScore, best = score, anime
-		}
-	}
-	if best.ID == 0 {
-		return MALAnime{}, 0, nil
-	}
-	return best, bestScore, nil
-}
-
-func splitDesired(it AVItem, firstEpisodes, secondEpisodes int) (int, int) {
-	first := desiredFor(it, firstEpisodes)
-	second := it.Seen - firstEpisodes
-	if second < 0 {
-		second = 0
-	}
-	if secondEpisodes > 0 && second > secondEpisodes {
-		second = secondEpisodes
-	}
-	return first, second
-}
-
-func splitStatus(sourceStatus string, desired, maxEpisodes int, isSecond bool) string {
-	if sourceStatus == "plan_to_watch" {
-		return sourceStatus
-	}
-	if maxEpisodes > 0 && desired >= maxEpisodes {
-		return "completed"
-	}
-	if desired == 0 && isSecond {
-		return "plan_to_watch"
-	}
-	return sourceStatus
-}
-
-func (a *App) updateMALItem(ctx context.Context, anime MALAnime, desired int, status string, dry, only bool) (int, string, bool, error) {
-	current, currentStatus := animeState(anime)
-	if only && desired < current {
-		return current, currentStatus, false, nil
-	}
-	if desired == current && currentStatus == status {
-		return current, currentStatus, false, nil
-	}
-	if !dry {
-		vals := url.Values{"status": {status}, "num_watched_episodes": {strconv.Itoa(desired)}}
-		if err := a.malRequestContext(ctx, "PUT", fmt.Sprintf("/anime/%d/my_list_status", anime.ID), vals, nil); err != nil {
-			return current, currentStatus, false, err
-		}
-	}
-	return desired, status, true, nil
-}
-
 func malStatus(s int) string {
 	switch s {
 	case 0:
@@ -1578,15 +1442,6 @@ func (a *App) getCachedMAL(ctx context.Context, c CacheEntry) (MALAnime, error) 
 	return anime, err
 }
 
-func (a *App) getCachedMAL2(ctx context.Context, c CacheEntry) (MALAnime, error) {
-	if c.MALID2 == 0 {
-		return MALAnime{}, nil
-	}
-	var anime MALAnime
-	err := a.malRequestContext(ctx, "GET", fmt.Sprintf("/anime/%d?fields=id,title,alternative_titles,num_episodes,media_type,start_date,my_list_status", c.MALID2), nil, &anime)
-	return anime, err
-}
-
 func (a *App) runSync(trigger string) {
 	a.mu.Lock()
 	if a.running {
@@ -1679,7 +1534,7 @@ func (a *App) runSync(trigger string) {
 		cacheProtected := only && desiredCached < cache.MALSeen
 
 		// Ruta rápida: la fuente no cambió, MAL fue validado recientemente y el estado cacheado ya es correcto.
-		if unchanged && fresh && cache.MALID2 == 0 && (cacheAlreadyCorrect || cacheProtected) {
+		if unchanged && fresh && (cacheAlreadyCorrect || cacheProtected) {
 			last.Skipped++
 			last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, MALID: cache.MALID, MALTitle: cache.MALTitle, MatchScore: cache.MatchScore, From: cache.MALSeen, To: desiredCached, Status: status, Result: "skipped", Message: "Sin cambios (caché)"})
 			a.mu.Lock()
@@ -1692,7 +1547,7 @@ func (a *App) runSync(trigger string) {
 		var anime MALAnime
 		matchScore := 0
 		needResolve := !cached || cache.MALID == 0 || cache.SourceTitle != normalize(it.Title)
-		needValidate := cached && (!fresh || !unchanged || cache.MALID2 > 0)
+		needValidate := cached && (!fresh || !unchanged)
 
 		if !needResolve && needValidate {
 			anime, err = a.getCachedMAL(ctx, cache)
@@ -1730,82 +1585,12 @@ func (a *App) runSync(trigger string) {
 			matchScore = cache.MatchScore
 		}
 
-		// AnimeAV1 puede agrupar una temporada completa mientras MAL la divide en
-		// una ficha principal y otra "Part 2". En ese caso se actualizan ambas en
-		// orden: primero se llena la parte 1 y el excedente pasa a la parte 2.
-		var anime2 MALAnime
-		if cache.MALID2 > 0 && !needResolve {
-			anime2, err = a.getCachedMAL2(ctx, cache)
-			if err != nil {
-				if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
-					cancelled = true
-					break
-				}
-				anime2 = MALAnime{}
-			}
-		}
-		if anime2.ID == 0 && it.Total > anime.NumEpisodes && anime.NumEpisodes > 0 {
-			anime2, _, err = a.resolveSplitPart2(ctx, it, anime)
-			if err != nil && (errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled)) {
-				cancelled = true
-				break
-			}
-		}
-		if anime2.ID > 0 {
-			desired1, desired2 := splitDesired(it, anime.NumEpisodes, anime2.NumEpisodes)
-			status1 := splitStatus(status, desired1, anime.NumEpisodes, false)
-			status2 := splitStatus(status, desired2, anime2.NumEpisodes, true)
-			old1, _ := animeState(anime)
-			old2, _ := animeState(anime2)
-			new1, newStatus1, changed1, e1 := a.updateMALItem(ctx, anime, desired1, status1, dry, only)
-			if e1 != nil {
-				if errors.Is(e1, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
-					cancelled = true
-					break
-				}
-				last.Errors++
-				last.Unmatched = append(last.Unmatched, it.Title+": "+e1.Error())
-				last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, MALID: anime.ID, MALTitle: anime.Title, MALID2: anime2.ID, MALTitle2: anime2.Title, MatchScore: matchScore, From: old1 + old2, To: desired1 + desired2, Status: status, Result: "error", Message: e1.Error()})
-				continue
-			}
-			new2, newStatus2, changed2, e2 := a.updateMALItem(ctx, anime2, desired2, status2, dry, only)
-			if e2 != nil {
-				if errors.Is(e2, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
-					cancelled = true
-					break
-				}
-				last.Errors++
-				last.Unmatched = append(last.Unmatched, it.Title+": "+e2.Error())
-				last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, MALID: anime.ID, MALTitle: anime.Title, MALID2: anime2.ID, MALTitle2: anime2.Title, MatchScore: matchScore, From: old1 + old2, To: desired1 + desired2, Status: status, Result: "error", Message: "Parte 2: " + e2.Error()})
-				continue
-			}
-			entry := CacheEntry{MediaID: it.MediaID, MALID: anime.ID, MALTitle: anime.Title, MALID2: anime2.ID, MALTitle2: anime2.Title, MAL2Episodes: anime2.NumEpisodes, MAL2Seen: new2, MAL2Status: newStatus2, MatchType: "split_season", MatchScore: matchScore, SourceTitle: normalize(it.Title), SourceSeen: it.Seen, SourceStatus: it.Status, SourceTotal: it.Total, MALSeen: new1, MALStatus: newStatus1, LastValidated: time.Now().Unix(), UpdatedAt: time.Now().Unix(), MatcherVersion: appVersion, SearchStrategy: "title+split_part_2"}
-			a.cachePut(entry)
-			msg := fmt.Sprintf("Temporada partida: %s %d/%d + %s %d/%d", anime.Title, desired1, anime.NumEpisodes, anime2.Title, desired2, anime2.NumEpisodes)
-			if changed1 || changed2 {
-				last.Updated++
-				if dry {
-					msg = "Simulado · " + msg
-				}
-				last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, MALID: anime.ID, MALTitle: anime.Title, MALID2: anime2.ID, MALTitle2: anime2.Title, MatchScore: matchScore, From: old1 + old2, To: desired1 + desired2, Status: status, Result: "updated", Message: msg})
-				a.appendHistory(map[string]any{"ts": time.Now().Unix(), "title": it.Title, "animeav1_media_id": it.MediaID, "match_type": "split_season", "mal_id": anime.ID, "mal_title": anime.Title, "mal_id_2": anime2.ID, "mal_title_2": anime2.Title, "from_1": old1, "to_1": desired1, "from_2": old2, "to_2": desired2, "dry_run": dry})
-			} else {
-				last.Skipped++
-				last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, MALID: anime.ID, MALTitle: anime.Title, MALID2: anime2.ID, MALTitle2: anime2.Title, MatchScore: matchScore, From: old1 + old2, To: desired1 + desired2, Status: status, Result: "skipped", Message: msg + " · ya estaba sincronizado"})
-			}
-			a.mu.Lock()
-			a.progressProcessed = idx + 1
-			a.mu.Unlock()
-			continue
-		}
-
 		current, currentStatus := animeState(anime)
 		desired := desiredFor(it, anime.NumEpisodes)
 		entry := CacheEntry{
 			MediaID: it.MediaID, MALID: anime.ID, MALTitle: anime.Title, MatchScore: matchScore,
 			SourceTitle: normalize(it.Title), SourceSeen: it.Seen, SourceStatus: it.Status, SourceTotal: it.Total,
 			MALSeen: current, MALStatus: currentStatus, LastValidated: time.Now().Unix(), UpdatedAt: time.Now().Unix(),
-			MatcherVersion: appVersion, SearchStrategy: "multi_query",
 		}
 
 		if only && desired < current {

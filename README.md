@@ -1,4 +1,13 @@
-# AnimeAV1 → MyAnimeList Sync v1.5.0
+# AnimeAV1 → MyAnimeList Sync
+
+## Cambios de v1.5.1
+
+- Restaura y hace visible el botón **Detener sincronización** durante cualquier ejecución.
+- Corrige falsos negativos en títulos exactos y alias exactos.
+- Detecta temporadas unificadas en AnimeAV1 y partidas en MAL como `Título` + `Título Part 2`.
+- Reparte el progreso secuencialmente: primero completa la parte 1 y pasa el excedente a la parte 2.
+- Guarda ambos IDs de MAL en la caché y muestra el mapeo doble en la interfaz.
+- Respeta `Solo aumentar episodios` de forma independiente para cada parte.
 
 ## Cambios principales
 
