@@ -1,5 +1,14 @@
 # AnimeAV1 → MyAnimeList Sync
 
+## Cambios de v1.5.4
+
+- Añade caché negativa configurable (`NEGATIVE_CACHE_HOURS`, 24 h por defecto) para no repetir búsquedas fallidas en cada sincronización.
+- Reduce el buscador a una consulta por título o alias, limita candidatos y corta inmediatamente ante coincidencias exactas.
+- Registra por anime el número de consultas, fichas evaluadas y tiempo empleado.
+- Publicación Docker automática para ARMv7 con las etiquetas `1.5.4` y `latest`.
+
+# AnimeAV1 → MyAnimeList Sync
+
 ## Cambios de v1.5.3
 
 - Mantiene el botón **Detener sincronización** durante cualquier ejecución.
