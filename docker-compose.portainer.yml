@@ -1,6 +1,6 @@
 services:
   animeav1-mal-sync:
-    image: ovelayos/animeav1-mal-sync:1.5.4
+    image: ovelayos/animeav1-mal-sync:v1.5.4
     container_name: animeav1-mal-sync
     restart: unless-stopped
     ports:
@@ -14,7 +14,6 @@ services:
       ONLY_INCREASE: "true"
       AUTO_SYNC: "false"
       TITLE_MATCH_THRESHOLD: "80"
-      NEGATIVE_CACHE_HOURS: "24"
       DATA_DIR: "/data"
       LISTEN_ADDR: ":8787"
       LOG_TIMEZONE: "Europe/Madrid"
