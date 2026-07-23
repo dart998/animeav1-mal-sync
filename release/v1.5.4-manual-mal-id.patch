@@ -1,0 +1,18 @@
+diff --git a/main.go b/main.go
+index 413a5d7..8875b68 100644
+--- a/main.go
++++ b/main.go
+@@ -215,6 +215,7 @@ func main() {
+ 	mux.HandleFunc("/cache/clear", app.clearCacheHandler)
+ 	mux.HandleFunc("/api/cache", app.cacheAPI)
+ 	mux.HandleFunc("/api/cache/delete", app.deleteCacheEntryAPI)
++	mux.HandleFunc("/api/cache/manual", app.manualCacheEntryAPI)
+ 	mux.HandleFunc("/api/cache/candidates", app.cacheCandidatesAPI)
+ 	mux.HandleFunc("/api/cache/recompute", app.recomputeCacheEntryAPI)
+ 	mux.HandleFunc("/history/clear", app.clearHistoryHandler)
+@@ -459,6 +460,7 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
+ <h1>AnimeAV1 → MyAnimeList</h1><div class="muted">v%s · EX4100 ARMv7 · lectura SvelteKit por HTTP</div>
+ <div class="card"><h2>AnimeAV1</h2><p>%s</p><form method="post" action="/cookie"><label>Cookie completa del navegador</label><textarea name="cookie" rows="3" placeholder="session=...; otra_cookie=...">%s</textarea><button>Guardar cookie</button> <a class="btn secondary" href="/check">Verificar</a></form></div>
+ <div class="card"><h2>MyAnimeList</h2><p>%s</p><a class="btn" href="/oauth/start">Conectar con MAL</a> <a class="btn danger" href="/oauth/disconnect">Desconectar</a></div>
++<div class="card"><h2>Asignación manual de MAL</h2><p class="muted">Úsalo cuando el matching automático falle. El ID de AnimeAV1 aparece en la tabla de resultados/caché. Puedes indicar una segunda ficha MAL para temporadas divididas en dos partes.</p><form method="post" action="/api/cache/manual"><label>ID de AnimeAV1</label><input type="number" min="1" required name="media_id" placeholder="Ej.: 2674"><label>ID de MyAnimeList</label><input type="number" min="1" required name="mal_id" placeholder="Ej.: 25131"><label>Segundo ID de MyAnimeList (opcional)</label><input type="number" min="1" name="mal_id_2" placeholder="Solo para temporadas partidas"><button>Guardar coincidencia manual</button></form></div>
+ <div class="card"><h2>Sincronización</h2><form method="post" action="/settings"><label>Intervalo en minutos</label><input type="number" min="1" name="interval" value="%d"><label><input style="width:auto" type="checkbox" name="dry" %s> Modo simulación (no escribe en MAL)</label><br><label><input style="width:auto" type="checkbox" name="increase" %s> Solo aumentar episodios</label><br><label><input style="width:auto" type="checkbox" name="auto" %s> Sincronización automática</label><br><br><button>Guardar ajustes</button> <button formaction="/sync">Sincronizar ahora</button></form><form method="post" action="/sync/stop" style="display:inline"><button id="stopButton" class="danger" style="display:none">Detener sincronización</button></form> <button class="secondary" onclick="openCache()">Ver caché</button> <form method="post" action="/cache/clear" style="display:inline" onsubmit="return confirm('¿Eliminar toda la caché?')"><button id="clearCacheButton" class="secondary">Eliminar caché</button></form><p class="muted">Caché persistente: <b id="cacheCount">%d</b> coincidencias.</p><div id="progressWrap" class="progress-wrap"><div class="progress-track"><div id="progressBar" class="progress-bar"></div></div><div id="progressLabel" class="progress-label"></div></div></div>
