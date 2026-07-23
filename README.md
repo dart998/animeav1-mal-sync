@@ -1,6 +1,6 @@
 # AnimeAV1 → MyAnimeList Sync
 
-## Cambios de v1.5.2
+## Cambios de v1.5.3
 
 - Mantiene el botón **Detener sincronización** durante cualquier ejecución.
 - Detecta temporadas unificadas en AnimeAV1 y partidas en MAL como `Título` + `Título Part 2`.
