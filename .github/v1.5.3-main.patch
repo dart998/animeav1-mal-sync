@@ -1,0 +1,116 @@
+diff --git a/main.go b/main.go
+index 6f5ef52..413a5d7 100644
+--- a/main.go
++++ b/main.go
+@@ -25,7 +25,7 @@ import (
+ )
+ 
+ const (
+-	appVersion = "1.5.2"
++	appVersion = "1.5.3"
+ 	authURL    = "https://myanimelist.net/v1/oauth2/authorize"
+ 	tokenURL   = "https://myanimelist.net/v1/oauth2/token"
+ 	apiBase    = "https://api.myanimelist.net/v2"
+@@ -280,18 +280,59 @@ func (a *App) appendHistory(v any) {
+ 
+ func (a *App) ensureDefaultAliases() {
+ 	path := filepath.Join(a.dataDir, "aliases.json")
+-	if _, err := os.Stat(path); err == nil {
+-		return
+-	}
++	// Los aliases forman parte de la lógica del matcher. Antes de 1.5.3 solo se
++	// copiaban en una instalación nueva, por lo que los volúmenes persistentes no
++	// recibían las correcciones incluidas en versiones posteriores. Ahora se
++	// fusionan sin borrar ni reemplazar aliases personalizados del usuario.
+ 	defaults := map[string][]string{
+ 		"Temple":                    {"TenPuru", "TenPuru: No One Can Live on Loneliness"},
+-		"Mahou Shoujo ni Akogarete": {"Gushing over Magical Girls"},
++		"Mahou Shoujo ni Akogarete": {"Gushing over Magical Girls", "Looking Up to Magical Girls"},
+ 		"Futoku no Guild":           {"Immoral Guild"},
+ 		"Mayo Chiki!":               {"Mayo Chiki"},
+-		"Seikon no Qwaser":          {"The Qwaser of Stigmata"},
+-		"S-Rank Monster no Behemoth dakedo, Neko to Machigawarete Elf Musume no Pet toshite Kurashitemasu": {"Beheneko", "Behemoth S-Ranked Monster"},
++		"Seikon no Qwaser":          {"The Qwaser of Stigmata", "Seikon no Quasar"},
++		"Mushoku Tensei II: Isekai Ittara Honki Dasu": {"Mushoku Tensei: Jobless Reincarnation Season 2", "Mushoku Tensei 2nd Season"},
++		"Mato Seihei no Slave 2":                      {"Mato Seihei no Slave 2nd Season", "Chained Soldier Season 2"},
++		"Sawaranaide Kotesashi-kun":                   {"Don't Touch Kotesashi", "Hands Off: Sawaranaide Kotesashi-kun"},
++		"Ichijouma Mankitsugurashi!":                  {"Ichijouma Mankitsugurashi"},
++		"S-Rank Monster no \"Behemoth\" dakedo, Neko to Machigawarete Elf Musume no Pet toshite Kurashitemasu": {"Beheneko: The Elf-Girl's Cat is Secretly an S-Ranked Monster!", "Beheneko", "Behemoth S-Ranked Monster"},
++		"S-Rank Monster no Behemoth dakedo, Neko to Machigawarete Elf Musume no Pet toshite Kurashitemasu":     {"Beheneko: The Elf-Girl's Cat is Secretly an S-Ranked Monster!", "Beheneko", "Behemoth S-Ranked Monster"},
++	}
++	existing := map[string][]string{}
++	if b, err := os.ReadFile(path); err == nil {
++		var raw map[string]json.RawMessage
++		if json.Unmarshal(b, &raw) == nil {
++			for k, v := range raw {
++				var simple []string
++				if json.Unmarshal(v, &simple) == nil {
++					existing[k] = append(existing[k], simple...)
++					continue
++				}
++				var rich struct {
++					Search    []string `json:"search"`
++					Preferred string   `json:"preferred"`
++				}
++				if json.Unmarshal(v, &rich) == nil {
++					if rich.Preferred != "" {
++						existing[k] = append(existing[k], rich.Preferred)
++					}
++					existing[k] = append(existing[k], rich.Search...)
++				}
++			}
++		}
+ 	}
+-	b, _ := json.MarshalIndent(defaults, "", "  ")
++	for k, values := range defaults {
++		seen := map[string]bool{}
++		for _, v := range existing[k] {
++			seen[normalize(v)] = true
++		}
++		for _, v := range values {
++			if n := normalize(v); n != "" && !seen[n] {
++				existing[k] = append(existing[k], v)
++				seen[n] = true
++			}
++		}
++	}
++	b, _ := json.MarshalIndent(existing, "", "  ")
+ 	_ = os.WriteFile(path, append(b, '\n'), 0600)
+ }
+ 
+@@ -1289,6 +1330,8 @@ func (a *App) resolve(ctx context.Context, it AVItem) (MALAnime, int, error) {
+ 	bestBase := -1
+ 	bestRank := -100000
+ 	var best MALAnime
++	bestRejectedScore := -1
++	bestRejectedTitle := ""
+ 	for id := range ids {
+ 		var anime MALAnime
+ 		fields := "id,title,alternative_titles,num_episodes,media_type,start_date,my_list_status"
+@@ -1315,6 +1358,16 @@ func (a *App) resolve(ctx context.Context, it AVItem) (MALAnime, int, error) {
+ 			}
+ 		}
+ 		if !matched {
++			// Conserva el candidato textual más próximo para que el log permita
++			// diagnosticar por qué una coincidencia no fue aceptada.
++			for _, sourceTitle := range a.candidateTitles(it) {
++				for _, malTitle := range animeTitles(anime) {
++					s := similarity(normalize(sourceTitle), normalize(malTitle))
++					if s > bestRejectedScore {
++						bestRejectedScore, bestRejectedTitle = s, anime.Title
++					}
++				}
++			}
+ 			continue
+ 		}
+ 		// Los episodios ayudan a desempatar candidatos, pero nunca pueden convertir
+@@ -1339,6 +1392,9 @@ func (a *App) resolve(ctx context.Context, it AVItem) (MALAnime, int, error) {
+ 		if len(ids) == 0 {
+ 			return MALAnime{}, -1, fmt.Errorf("sin candidatos devueltos por MAL")
+ 		}
++		if bestRejectedTitle != "" {
++			return MALAnime{}, bestScore, fmt.Errorf("candidatos encontrados, pero ninguno superó el umbral (%d puntos); mejor descartado: %q (%d%% de similitud bruta)", bestScore, bestRejectedTitle, bestRejectedScore)
++		}
+ 		return MALAnime{}, bestScore, fmt.Errorf("candidatos encontrados, pero ninguno superó el umbral (%d puntos)", bestScore)
+ 	}
+ 	return best, bestScore, nil
