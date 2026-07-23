@@ -1,8 +1,12 @@
 {
-  "Temple": {"search": ["Temple", "TenPuru", "TenPuru: No One Can Live on Loneliness"], "preferred": "TenPuru"},
-  "Mahou Shoujo ni Akogarete": {"search": ["Mahou Shoujo ni Akogarete", "Gushing over Magical Girls"], "preferred": "Mahou Shoujo ni Akogarete"},
-  "Futoku no Guild": {"search": ["Futoku no Guild", "Immoral Guild"], "preferred": "Futoku no Guild"},
-  "Mayo Chiki!": {"search": ["Mayo Chiki!", "Mayo Chiki"], "preferred": "Mayo Chiki!"},
-  "Seikon no Qwaser": {"search": ["Seikon no Qwaser", "The Qwaser of Stigmata"], "preferred": "Seikon no Qwaser"},
-  "S-Rank Monster no Behemoth dakedo, Neko to Machigawarete Elf Musume no Pet toshite Kurashitemasu": {"search": ["Beheneko", "Behemoth S-Ranked Monster"], "preferred": "S-Rank Monster no Behemoth dakedo"}
+  "Temple": ["TenPuru", "TenPuru: No One Can Live on Loneliness"],
+  "Mahou Shoujo ni Akogarete": ["Gushing over Magical Girls", "Looking Up to Magical Girls"],
+  "Futoku no Guild": ["Immoral Guild"],
+  "Mayo Chiki!": ["Mayo Chiki"],
+  "Seikon no Qwaser": ["The Qwaser of Stigmata", "Seikon no Quasar"],
+  "Mushoku Tensei II: Isekai Ittara Honki Dasu": ["Mushoku Tensei: Jobless Reincarnation Season 2", "Mushoku Tensei 2nd Season"],
+  "Mato Seihei no Slave 2": ["Mato Seihei no Slave 2nd Season", "Chained Soldier Season 2"],
+  "Sawaranaide Kotesashi-kun": ["Don't Touch Kotesashi", "Hands Off: Sawaranaide Kotesashi-kun"],
+  "Ichijouma Mankitsugurashi!": ["Ichijouma Mankitsugurashi"],
+  "S-Rank Monster no \"Behemoth\" dakedo, Neko to Machigawarete Elf Musume no Pet toshite Kurashitemasu": ["Beheneko: The Elf-Girl's Cat is Secretly an S-Ranked Monster!", "Beheneko", "Behemoth S-Ranked Monster"]
 }
