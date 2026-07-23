@@ -1,0 +1,37 @@
+name: Apply v1.5.3 source patch
+
+on:
+  push:
+    paths:
+      - ".github/workflows/apply-v1.5.3.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply source changes
+        run: |
+          git apply --check .github/v1.5.3-main.patch
+          git apply .github/v1.5.3-main.patch
+          gofmt -w main.go
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Test
+        run: go test ./...
+      - name: Commit applied patch
+        run: |
+          rm .github/v1.5.3-main.patch
+          rm .github/workflows/apply-v1.5.3.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "v1.5.3: apply matcher and alias migration fixes"
+          git push origin HEAD:main
