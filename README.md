@@ -1,13 +1,13 @@
 # AnimeAV1 → MyAnimeList Sync
 
-## Cambios de v1.5.4
+## Cambios de v1.5.5
 
-- Añade caché negativa configurable (`NEGATIVE_CACHE_HOURS`, 24 h por defecto) para no repetir búsquedas fallidas en cada sincronización.
-- Reduce el buscador a una consulta por título o alias, limita candidatos y corta inmediatamente ante coincidencias exactas.
-- Registra por anime el número de consultas, fichas evaluadas y tiempo empleado.
-- Publicación Docker automática para ARMv7 con las etiquetas `1.5.4` y `latest`.
-
-# AnimeAV1 → MyAnimeList Sync
+- La asignación manual ya no aparece como una sección independiente.
+- Cada error de matching incluye sus propios campos para guardar uno o dos IDs de MyAnimeList.
+- El segundo ID permite asociar temporadas partidas en dos entradas de MAL.
+- Los identificadores de AnimeAV1 se tratan como texto y admiten valores numéricos, UUID, slugs u otros formatos.
+- Se mantiene compatibilidad con cachés antiguas que guardaban el identificador de AnimeAV1 como número.
+- GitHub Actions queda fuera del paquete; la publicación se realiza mediante `release.sh`.
 
 ## Cambios de v1.5.3
 

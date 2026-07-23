@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func animeForTest(id int, title string, episodes int) MALAnime {
 	return MALAnime{ID: id, Title: title, NumEpisodes: episodes, MediaType: "tv"}
@@ -31,5 +34,17 @@ func TestValidSplitPairPreservesSeasonIdentity(t *testing.T) {
 	second := animeForTest(2, "Example 3rd Season Part 2", 12)
 	if validSplitPair(first, second) {
 		t.Fatal("different seasons must not be paired")
+	}
+}
+
+func TestIDStringAcceptsNumberAndString(t *testing.T) {
+	for _, input := range []string{`{"media_id":123}`, `{"media_id":"anime-uuid-123"}`} {
+		var item AVItem
+		if err := json.Unmarshal([]byte(input), &item); err != nil {
+			t.Fatalf("unmarshal %s: %v", input, err)
+		}
+		if item.MediaID == "" {
+			t.Fatalf("empty media id for %s", input)
+		}
 	}
 }
