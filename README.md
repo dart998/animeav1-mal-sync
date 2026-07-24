@@ -1,6 +1,11 @@
 # AnimeAV1 → MyAnimeList Sync
 
-## Cambios de v1.5.5
+## Cambios de v1.5.6
+
+- La asignación manual se integra directamente en cada error de matching.
+- Se elimina la duplicación visual del ID de AnimeAV1 en la columna Detalle.
+- Se añade un enlace visible para buscar el título directamente en MyAnimeList.
+- Al guardar uno o dos IDs de MAL, el error se elimina de forma persistente, se recalculan los contadores y la fila desaparece sin recargar.
 
 - La asignación manual ya no aparece como una sección independiente.
 - Cada error de matching incluye sus propios campos para guardar uno o dos IDs de MyAnimeList.

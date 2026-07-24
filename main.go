@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	appVersion = "1.5.5"
+	appVersion = "1.5.6"
 	authURL    = "https://myanimelist.net/v1/oauth2/authorize"
 	tokenURL   = "https://myanimelist.net/v1/oauth2/token"
 	apiBase    = "https://api.myanimelist.net/v2"
@@ -491,9 +491,9 @@ function updateProgress(x){const manual=!!x.running;progressWrap.style.display=m
 async function pollStatus(){try{const r=await fetch('/api/status',{cache:'no-store'});const x=await r.json();lastData=x;runningText.textContent=x.running?'Sí':'No';lastStatus.textContent=x.last_status||'Nunca';found.textContent=x.last?.found??0;updated.textContent=x.last?.updated??0;errors.textContent=x.last?.errors??0;lastMessage.textContent=x.last?.message||'';cacheCount.textContent=x.cache_entries??0;updateProgress(x)}catch(e){}}
 async function pollLogs(){try{const r=await fetch('/api/logs',{cache:'no-store'});const x=await r.json();terminal.textContent=x.text||'Sin historial'}catch(e){}}
 function showModal(title,html){modalTitle.textContent=title;modalBody.innerHTML=html;modal.classList.add('open')} function closeModal(){modal.classList.remove('open')}
-function manualMatchBox(i){return '<div class="manual-match"><div class="muted">ID AnimeAV1: <code>'+esc(i.media_id)+'</code></div><div style="display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:end;margin-top:8px"><label>MAL ID<input class="manual-mal-1" type="number" min="1" inputmode="numeric" placeholder="Obligatorio"></label><label>MAL ID 2<input class="manual-mal-2" type="number" min="1" inputmode="numeric" placeholder="Opcional, temporada dividida"></label><button type="button" class="manual-save" data-media-id="'+esc(i.media_id)+'">Guardar</button></div><div class="manual-result muted"></div></div>'}
+function manualMatchBox(i){const q=encodeURIComponent(i.source_title||'');return '<div class="manual-match"><div style="margin:8px 0 10px"><a class="btn secondary" target="_blank" rel="noopener" href="https://myanimelist.net/anime.php?q='+q+'">🔎 Buscar «'+esc(i.source_title)+'» en MyAnimeList ↗</a></div><div style="display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:end"><label>MAL ID<input class="manual-mal-1" type="number" min="1" inputmode="numeric" placeholder="Obligatorio"></label><label>MAL ID 2<input class="manual-mal-2" type="number" min="1" inputmode="numeric" placeholder="Opcional, temporada dividida"></label><button type="button" class="manual-save" data-media-id="'+esc(i.media_id)+'">Guardar</button></div><div class="manual-result muted"></div></div>'}
 function resultTable(items,cacheMode=false){if(!items.length)return '<p>Sin elementos.</p>';const actionHead=cacheMode?'<th aria-label="Acciones"></th>':'';return '<div class="table-wrap"><table><thead><tr><th>AnimeAV1</th><th>MAL</th><th>Puntos</th><th>Episodios</th><th>Resultado</th><th>Detalle</th>'+actionHead+'</tr></thead><tbody>'+items.map(i=>{const action=cacheMode?'<td style="white-space:nowrap"><button type="button" class="secondary inspect-button" data-media-id="'+esc(i.media_id)+'" title="Ver candidatos">🔍</button> <button type="button" class="secondary recompute-button" data-media-id="'+esc(i.media_id)+'" title="Recalcular coincidencia">↻</button> <button type="button" class="danger trash-button" data-media-id="'+esc(i.media_id)+'" title="Eliminar esta coincidencia de la caché">🗑️</button></td>':'';const manual=i.result==='error'?manualMatchBox(i):'';return '<tr data-cache-row="'+esc(i.media_id)+'"><td>'+esc(i.source_title)+'<br><span class="muted">'+esc(i.media_id)+'</span></td><td>'+esc(i.mal_title||'—')+(i.mal_id?' <span class="muted">#'+i.mal_id+'</span>':'')+(i.mal_title_2?'<br>↳ '+esc(i.mal_title_2)+(i.mal_id_2?' <span class="muted">#'+i.mal_id_2+'</span>':''):'')+'</td><td>'+esc(i.match_score||'—')+'</td><td>'+esc(i.from)+' → '+esc(i.to)+'</td><td>'+esc(i.result)+'</td><td>'+esc(i.message||'')+manual+'</td>'+action+'</tr>'}).join('')+'</tbody></table></div>'}
-function bindManualMatches(){document.querySelectorAll('.manual-save').forEach(b=>b.addEventListener('click',async()=>{const box=b.closest('.manual-match'),one=box.querySelector('.manual-mal-1').value.trim(),two=box.querySelector('.manual-mal-2').value.trim(),out=box.querySelector('.manual-result');if(!one){out.textContent='Introduce al menos el primer ID de MAL.';return}b.disabled=true;out.textContent='Validando y guardando…';try{const body=new URLSearchParams({media_id:b.dataset.mediaId,mal_id:one});if(two)body.set('mal_id_2',two);const r=await fetch('/api/cache/manual',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});const x=await r.json().catch(()=>({}));if(!r.ok)throw new Error(x.error||'No se pudo guardar');out.textContent=two?'Guardado como temporada dividida.':'Coincidencia guardada.';await pollStatus();setTimeout(()=>openResults('error'),500)}catch(e){out.textContent=e.message||'No se pudo guardar'}finally{b.disabled=false}}))}
+function bindManualMatches(){document.querySelectorAll('.manual-save').forEach(b=>b.addEventListener('click',async()=>{const box=b.closest('.manual-match'),row=b.closest('tr'),one=box.querySelector('.manual-mal-1').value.trim(),two=box.querySelector('.manual-mal-2').value.trim(),out=box.querySelector('.manual-result');if(!one){out.textContent='Introduce al menos el primer ID de MAL.';return}b.disabled=true;out.textContent='Validando y guardando…';try{const body=new URLSearchParams({media_id:b.dataset.mediaId,mal_id:one});if(two)body.set('mal_id_2',two);const r=await fetch('/api/cache/manual',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});const x=await r.json().catch(()=>({}));if(!r.ok)throw new Error(x.error||'No se pudo guardar');out.textContent=two?'✓ Guardado como temporada dividida.':'✓ Coincidencia guardada.';if(lastData?.last?.items)lastData.last.items=lastData.last.items.filter(i=>!(String(i.media_id)===String(b.dataset.mediaId)&&i.result==='error'));if(lastData?.last){lastData.last.errors=x.errors??Math.max(0,(lastData.last.errors||0)-1);lastData.last.status=x.status||lastData.last.status;lastData.last.message=x.message||lastData.last.message}errors.textContent=x.errors??0;lastStatus.textContent=x.status||lastStatus.textContent;lastMessage.textContent=x.message||lastMessage.textContent;setTimeout(()=>{row?.remove();const tbody=document.querySelector('#modalBody tbody');if(tbody&&!tbody.children.length)modalBody.innerHTML='<p class="ok">✓ No hay errores de matching pendientes.</p>'},350);await pollStatus()}catch(e){out.textContent=e.message||'No se pudo guardar';b.disabled=false}}))}
 function openResults(kind){const items=lastData?.last?.items||[];const filtered=kind==='all'?items:items.filter(i=>i.result===kind);showModal(kind==='all'?'Coincidencias de la última ejecución':kind==='updated'?'Actualizados':'Errores',resultTable(filtered));if(kind==='error'||kind==='all')bindManualMatches()}
 async function deleteCacheMatch(mediaID,title){if(!confirm('¿Eliminar de la caché la coincidencia de "'+title+'"? En la siguiente sincronización se buscará de nuevo.'))return;try{const r=await fetch('/api/cache/delete',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'media_id='+encodeURIComponent(mediaID)});const x=await r.json().catch(()=>({}));if(!r.ok)throw new Error(x.error||'No se pudo eliminar');await openCache();await pollStatus()}catch(e){alert(e.message||'No se pudo eliminar la coincidencia')}}
 async function inspectCacheMatch(mediaID){showModal('Candidatos','<p>Buscando candidatos en MAL…</p>');try{const r=await fetch('/api/cache/candidates?media_id='+encodeURIComponent(mediaID),{cache:'no-store'});const x=await r.json();if(!r.ok)throw new Error(x.error||'No se pudo consultar');const rows=(x.items||[]).map(i=>'<tr><td>'+esc(i.mal_title)+' <span class="muted">#'+i.mal_id+'</span></td><td>'+esc(i.score)+'</td><td>'+esc(i.episodes||'—')+'</td><td>'+esc(i.media_type||'—')+'</td><td class="'+(i.accepted?'ok':'bad')+'">'+esc(i.reason)+'</td></tr>').join('');showModal('Candidatos: '+x.source_title,'<div class="table-wrap"><table><thead><tr><th>MAL</th><th>Puntos</th><th>Episodios</th><th>Tipo</th><th>Diagnóstico</th></tr></thead><tbody>'+rows+'</tbody></table></div>')}catch(e){showModal('Candidatos','<p>'+esc(e.message)+'</p>')}}
@@ -2170,6 +2170,45 @@ func (a *App) deleteCacheEntryAPI(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"ok": true, "media_id": mediaID, "count": a.cacheCount()})
 }
 
+func (a *App) resolveLastMatchingError(mediaID IDString, sourceTitle string) (int, string, string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	filtered := make([]RunItem, 0, len(a.state.Last.Items))
+	for _, item := range a.state.Last.Items {
+		if item.MediaID == mediaID && item.Result == "error" {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	a.state.Last.Items = filtered
+
+	unmatched := make([]string, 0, len(a.state.Last.Unmatched))
+	prefix := sourceTitle + ":"
+	for _, item := range a.state.Last.Unmatched {
+		if item == sourceTitle || strings.HasPrefix(item, prefix) {
+			continue
+		}
+		unmatched = append(unmatched, item)
+	}
+	a.state.Last.Unmatched = unmatched
+
+	errorsRemaining := 0
+	for _, item := range a.state.Last.Items {
+		if item.Result == "error" {
+			errorsRemaining++
+		}
+	}
+	a.state.Last.Errors = errorsRemaining
+	if errorsRemaining == 0 && a.state.Last.Status == "partial" {
+		a.state.Last.Status = "ok"
+	}
+	a.state.Last.Message = fmt.Sprintf("Encontrados %d, actualizados %d, omitidos %d, errores %d", a.state.Last.Found, a.state.Last.Updated, a.state.Last.Skipped, a.state.Last.Errors)
+	a.progressMessage = a.state.Last.Message
+	a.save()
+	return a.state.Last.Errors, a.state.Last.Status, a.state.Last.Message
+}
+
 func (a *App) manualCacheEntryAPI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if r.Method != http.MethodPost {
@@ -2257,8 +2296,9 @@ func (a *App) manualCacheEntryAPI(w http.ResponseWriter, r *http.Request) {
 		entry.MatchType = "manual_split"
 	}
 	a.cachePut(entry)
+	errorsRemaining, lastStatus, lastMessage := a.resolveLastMatchingError(mediaID, source.Title)
 	a.appendHistory(map[string]any{"ts": time.Now().Unix(), "event": "manual_match_saved", "media_id": mediaID, "source_title": source.Title, "mal_id": entry.MALID, "mal_title": entry.MALTitle, "mal_id_2": entry.MALID2, "mal_title_2": entry.MALTitle2})
-	json.NewEncoder(w).Encode(map[string]any{"ok": true, "entry": entry})
+	json.NewEncoder(w).Encode(map[string]any{"ok": true, "entry": entry, "errors": errorsRemaining, "status": lastStatus, "message": lastMessage})
 }
 
 type candidateDebug struct {

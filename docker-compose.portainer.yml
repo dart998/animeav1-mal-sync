@@ -1,6 +1,6 @@
 services:
   animeav1-mal-sync:
-    image: ovelayos/animeav1-mal-sync:v1.5.5
+    image: ovelayos/animeav1-mal-sync:1.5.6
     container_name: animeav1-mal-sync
     restart: unless-stopped
     ports:
