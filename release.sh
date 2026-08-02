@@ -87,7 +87,8 @@ echo
 echo "Commit que se publicará:"
 git --no-pager log -1 --oneline
 echo "Imagen: $VERSION_IMAGE"
-read -r -p "¿Crear/publicar la imagen Docker? [y/N]: " CONFIRM
+read -r -p "¿Crear/publicar la imagen Docker? [Y/n]: " CONFIRM
+CONFIRM="${CONFIRM:-Y}"
 [[ "$CONFIRM" =~ ^[Yy]$ ]] || { echo "Cancelado."; exit 0; }
 
 if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
