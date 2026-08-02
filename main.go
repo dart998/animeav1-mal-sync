@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	appVersion = "1.5.6"
+	appVersion = "1.6.0"
 	authURL    = "https://myanimelist.net/v1/oauth2/authorize"
 	tokenURL   = "https://myanimelist.net/v1/oauth2/token"
 	apiBase    = "https://api.myanimelist.net/v2"
@@ -238,6 +238,7 @@ func main() {
 	mux.HandleFunc("/api/cache/manual", app.manualCacheEntryAPI)
 	mux.HandleFunc("/api/cache/candidates", app.cacheCandidatesAPI)
 	mux.HandleFunc("/api/cache/recompute", app.recomputeCacheEntryAPI)
+	mux.HandleFunc("/animeav1/open", app.openAnimeAV1)
 	mux.HandleFunc("/history/clear", app.clearHistoryHandler)
 	mux.HandleFunc("/oauth/start", app.oauthStart)
 	mux.HandleFunc("/oauth/callback", app.oauthCallback)
@@ -476,7 +477,7 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	terminal := html.EscapeString(a.recentHistoryText(40))
 	page := fmt.Sprintf(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>AnimeAV1 → MAL</title><link rel="icon" type="image/svg+xml" href="/favicon.svg"><style>
-body{font-family:Arial,sans-serif;background:#111827;color:#e5e7eb;max-width:1000px;margin:30px auto;padding:0 16px}h1{margin-bottom:8px}.card{background:#1f2937;border-radius:12px;padding:20px;margin:16px 0}input,textarea{width:100%%;box-sizing:border-box;background:#111827;color:#fff;border:1px solid #4b5563;border-radius:8px;padding:10px;margin:6px 0 12px}button,.btn{display:inline-block;background:#14b8a6;color:#041311;border:0;border-radius:8px;padding:10px 15px;font-weight:bold;text-decoration:none;cursor:pointer}.secondary{background:#374151;color:#fff}.danger{background:#ef4444;color:#fff}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}.stat{background:#111827;padding:12px;border-radius:8px}.stat.clickable{cursor:pointer}.stat.clickable:hover{outline:1px solid #14b8a6}.muted{color:#9ca3af}.msg{white-space:pre-wrap;word-break:break-word}.progress-wrap{display:none;margin-top:16px}.progress-track{height:22px;background:#111827;border:1px solid #4b5563;border-radius:999px;overflow:hidden}.progress-bar{height:100%%;width:0;background:#14b8a6;transition:width .25s}.progress-label{margin-top:7px;color:#d1d5db}.terminal{background:#000;color:#fff;border:1px solid #4b5563;border-radius:8px;padding:14px;height:280px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:13px/1.45 Consolas,monospace}.modal{display:none;position:fixed;inset:0;background:#000b;z-index:20;padding:4vh 3vw}.modal.open{display:block}.modal-box{background:#1f2937;max-width:1100px;max-height:88vh;margin:auto;border-radius:12px;padding:18px;overflow:auto}.modal-head{display:flex;justify-content:space-between;align-items:center;gap:15px}.table-wrap{overflow:auto}table{width:100%%;border-collapse:collapse;font-size:14px}th,td{padding:9px;border-bottom:1px solid #374151;text-align:left;vertical-align:top}th{position:sticky;top:0;background:#1f2937}.ok{color:#6ee7b7}.bad{color:#fca5a5}.warn{color:#fde68a}</style></head><body>
+body{font-family:Arial,sans-serif;background:#111827;color:#e5e7eb;max-width:1000px;margin:30px auto;padding:0 16px}h1{margin-bottom:8px}.card{background:#1f2937;border-radius:12px;padding:20px;margin:16px 0}input,textarea{width:100%%;box-sizing:border-box;background:#111827;color:#fff;border:1px solid #4b5563;border-radius:8px;padding:10px;margin:6px 0 12px}button,.btn{display:inline-block;background:#14b8a6;color:#041311;border:0;border-radius:8px;padding:10px 15px;font-weight:bold;text-decoration:none;cursor:pointer}.secondary{background:#374151;color:#fff}.danger{background:#ef4444;color:#fff}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}.stat{background:#111827;padding:12px;border-radius:8px}.stat.clickable{cursor:pointer}.stat.clickable:hover{outline:1px solid #14b8a6}.muted{color:#9ca3af}.id-link{color:#9ca3af;text-decoration:none}.id-link:hover{color:#d1d5db;text-decoration:underline}.msg{white-space:pre-wrap;word-break:break-word}.progress-wrap{display:none;margin-top:16px}.progress-track{height:22px;background:#111827;border:1px solid #4b5563;border-radius:999px;overflow:hidden}.progress-bar{height:100%%;width:0;background:#14b8a6;transition:width .25s}.progress-label{margin-top:7px;color:#d1d5db}.terminal{background:#000;color:#fff;border:1px solid #4b5563;border-radius:8px;padding:14px;height:280px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:13px/1.45 Consolas,monospace}.modal{display:none;position:fixed;inset:0;background:#000b;z-index:20;padding:4vh 3vw}.modal.open{display:block}.modal-box{background:#1f2937;max-width:1100px;max-height:88vh;margin:auto;border-radius:12px;padding:18px;overflow:auto}.modal-head{display:flex;justify-content:space-between;align-items:center;gap:15px}.table-wrap{overflow:auto}table{width:100%%;border-collapse:collapse;font-size:14px}th,td{padding:9px;border-bottom:1px solid #374151;text-align:left;vertical-align:top}th{position:sticky;top:0;background:#1f2937}.ok{color:#6ee7b7}.bad{color:#fca5a5}.warn{color:#fde68a}</style></head><body>
 <h1>AnimeAV1 → MyAnimeList</h1><div class="muted">v%s · EX4100 ARMv7 · lectura SvelteKit por HTTP</div>
 <div class="card"><h2>AnimeAV1</h2><p>%s</p><form method="post" action="/cookie"><label>Cookie completa del navegador</label><textarea name="cookie" rows="3" placeholder="session=...; otra_cookie=...">%s</textarea><button>Guardar cookie</button> <a class="btn secondary" href="/check">Verificar</a></form></div>
 <div class="card"><h2>MyAnimeList</h2><p>%s</p><a class="btn" href="/oauth/start">Conectar con MAL</a> <a class="btn danger" href="/oauth/disconnect">Desconectar</a></div>
@@ -492,7 +493,9 @@ async function pollStatus(){try{const r=await fetch('/api/status',{cache:'no-sto
 async function pollLogs(){try{const r=await fetch('/api/logs',{cache:'no-store'});const x=await r.json();terminal.textContent=x.text||'Sin historial'}catch(e){}}
 function showModal(title,html){modalTitle.textContent=title;modalBody.innerHTML=html;modal.classList.add('open')} function closeModal(){modal.classList.remove('open')}
 function manualMatchBox(i){const q=encodeURIComponent(i.source_title||'');return '<div class="manual-match"><div style="margin:8px 0 10px"><a class="btn secondary" target="_blank" rel="noopener" href="https://myanimelist.net/anime.php?q='+q+'">🔎 Buscar «'+esc(i.source_title)+'» en MyAnimeList ↗</a></div><div style="display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:end"><label>MAL ID<input class="manual-mal-1" type="number" min="1" inputmode="numeric" placeholder="Obligatorio"></label><label>MAL ID 2<input class="manual-mal-2" type="number" min="1" inputmode="numeric" placeholder="Opcional, temporada dividida"></label><button type="button" class="manual-save" data-media-id="'+esc(i.media_id)+'">Guardar</button></div><div class="manual-result muted"></div></div>'}
-function resultTable(items,cacheMode=false){if(!items.length)return '<p>Sin elementos.</p>';const actionHead=cacheMode?'<th aria-label="Acciones"></th>':'';return '<div class="table-wrap"><table><thead><tr><th>AnimeAV1</th><th>MAL</th><th>Puntos</th><th>Episodios</th><th>Resultado</th><th>Detalle</th>'+actionHead+'</tr></thead><tbody>'+items.map(i=>{const action=cacheMode?'<td style="white-space:nowrap"><button type="button" class="secondary inspect-button" data-media-id="'+esc(i.media_id)+'" title="Ver candidatos">🔍</button> <button type="button" class="secondary recompute-button" data-media-id="'+esc(i.media_id)+'" title="Recalcular coincidencia">↻</button> <button type="button" class="danger trash-button" data-media-id="'+esc(i.media_id)+'" title="Eliminar esta coincidencia de la caché">🗑️</button></td>':'';const manual=i.result==='error'?manualMatchBox(i):'';return '<tr data-cache-row="'+esc(i.media_id)+'"><td>'+esc(i.source_title)+'<br><span class="muted">'+esc(i.media_id)+'</span></td><td>'+esc(i.mal_title||'—')+(i.mal_id?' <span class="muted">#'+i.mal_id+'</span>':'')+(i.mal_title_2?'<br>↳ '+esc(i.mal_title_2)+(i.mal_id_2?' <span class="muted">#'+i.mal_id_2+'</span>':''):'')+'</td><td>'+esc(i.match_score||'—')+'</td><td>'+esc(i.from)+' → '+esc(i.to)+'</td><td>'+esc(i.result)+'</td><td>'+esc(i.message||'')+manual+'</td>'+action+'</tr>'}).join('')+'</tbody></table></div>'}
+function animeAV1IDLink(id){return '<a class="id-link" target="_blank" rel="noopener" href="/animeav1/open?media_id='+encodeURIComponent(id)+'" title="Abrir ficha en AnimeAV1">'+esc(id)+'</a>'}
+function malIDLink(id){return '<a class="id-link" target="_blank" rel="noopener" href="https://myanimelist.net/anime/'+encodeURIComponent(id)+'" title="Abrir ficha en MyAnimeList">#'+esc(id)+'</a>'}
+function resultTable(items,cacheMode=false){if(!items.length)return '<p>Sin elementos.</p>';const actionHead=cacheMode?'<th aria-label="Acciones"></th>':'';return '<div class="table-wrap"><table><thead><tr><th>AnimeAV1</th><th>MAL</th><th>Puntos</th><th>Episodios</th><th>Resultado</th><th>Detalle</th>'+actionHead+'</tr></thead><tbody>'+items.map(i=>{const action=cacheMode?'<td style="white-space:nowrap"><button type="button" class="secondary inspect-button" data-media-id="'+esc(i.media_id)+'" title="Ver candidatos">🔍</button> <button type="button" class="secondary recompute-button" data-media-id="'+esc(i.media_id)+'" title="Recalcular coincidencia">↻</button> <button type="button" class="danger trash-button" data-media-id="'+esc(i.media_id)+'" title="Eliminar esta coincidencia de la caché">🗑️</button></td>':'';const manual=i.result==='error'?manualMatchBox(i):'';return '<tr data-cache-row="'+esc(i.media_id)+'"><td>'+esc(i.source_title)+'<br>'+animeAV1IDLink(i.media_id)+'</td><td>'+esc(i.mal_title||'—')+(i.mal_id?' '+malIDLink(i.mal_id):'')+(i.mal_title_2?'<br>↳ '+esc(i.mal_title_2)+(i.mal_id_2?' '+malIDLink(i.mal_id_2):''):'')+'</td><td>'+esc(i.match_score||'—')+'</td><td>'+esc(i.from)+' → '+esc(i.to)+'</td><td>'+esc(i.result)+'</td><td>'+esc(i.message||'')+manual+'</td>'+action+'</tr>'}).join('')+'</tbody></table></div>'}
 function bindManualMatches(){document.querySelectorAll('.manual-save').forEach(b=>b.addEventListener('click',async()=>{const box=b.closest('.manual-match'),row=b.closest('tr'),one=box.querySelector('.manual-mal-1').value.trim(),two=box.querySelector('.manual-mal-2').value.trim(),out=box.querySelector('.manual-result');if(!one){out.textContent='Introduce al menos el primer ID de MAL.';return}b.disabled=true;out.textContent='Validando y guardando…';try{const body=new URLSearchParams({media_id:b.dataset.mediaId,mal_id:one});if(two)body.set('mal_id_2',two);const r=await fetch('/api/cache/manual',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});const x=await r.json().catch(()=>({}));if(!r.ok)throw new Error(x.error||'No se pudo guardar');out.textContent=two?'✓ Guardado como temporada dividida.':'✓ Coincidencia guardada.';if(lastData?.last?.items)lastData.last.items=lastData.last.items.filter(i=>!(String(i.media_id)===String(b.dataset.mediaId)&&i.result==='error'));if(lastData?.last){lastData.last.errors=x.errors??Math.max(0,(lastData.last.errors||0)-1);lastData.last.status=x.status||lastData.last.status;lastData.last.message=x.message||lastData.last.message}errors.textContent=x.errors??0;lastStatus.textContent=x.status||lastStatus.textContent;lastMessage.textContent=x.message||lastMessage.textContent;setTimeout(()=>{row?.remove();const tbody=document.querySelector('#modalBody tbody');if(tbody&&!tbody.children.length)modalBody.innerHTML='<p class="ok">✓ No hay errores de matching pendientes.</p>'},350);await pollStatus()}catch(e){out.textContent=e.message||'No se pudo guardar';b.disabled=false}}))}
 function openResults(kind){const items=lastData?.last?.items||[];const filtered=kind==='all'?items:items.filter(i=>i.result===kind);showModal(kind==='all'?'Coincidencias de la última ejecución':kind==='updated'?'Actualizados':'Errores',resultTable(filtered));if(kind==='error'||kind==='all')bindManualMatches()}
 async function deleteCacheMatch(mediaID,title){if(!confirm('¿Eliminar de la caché la coincidencia de "'+title+'"? En la siguiente sincronización se buscará de nuevo.'))return;try{const r=await fetch('/api/cache/delete',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'media_id='+encodeURIComponent(mediaID)});const x=await r.json().catch(()=>({}));if(!r.ok)throw new Error(x.error||'No se pudo eliminar');await openCache();await pollStatus()}catch(e){alert(e.message||'No se pudo eliminar la coincidencia')}}
@@ -2125,6 +2128,38 @@ func (a *App) cacheAPI(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(items, func(i, j int) bool { return items[i].MediaID < items[j].MediaID })
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	json.NewEncoder(w).Encode(map[string]any{"items": items, "count": len(items)})
+}
+
+func (a *App) openAnimeAV1(w http.ResponseWriter, r *http.Request) {
+	mediaID := IDString(strings.TrimSpace(r.URL.Query().Get("media_id")))
+	if mediaID == "" {
+		http.Error(w, "media_id no válido", http.StatusBadRequest)
+		return
+	}
+	a.mu.Lock()
+	cookie := a.state.Settings.Cookie
+	a.mu.Unlock()
+	if cookie == "" {
+		http.Error(w, "Configura primero la cookie de AnimeAV1", http.StatusUnauthorized)
+		return
+	}
+	items, err := a.scrapeContext(r.Context(), cookie)
+	if err != nil {
+		http.Error(w, "No se pudo consultar AnimeAV1: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	for _, item := range items {
+		if item.MediaID == mediaID {
+			if strings.TrimSpace(item.Slug) == "" {
+				http.Error(w, "AnimeAV1 no devolvió la URL de esta ficha", http.StatusNotFound)
+				return
+			}
+			target := "https://animeav1.com/media/" + url.PathEscape(strings.TrimSpace(item.Slug))
+			http.Redirect(w, r, target, http.StatusFound)
+			return
+		}
+	}
+	http.Error(w, "El ID no se encontró en la biblioteca actual de AnimeAV1", http.StatusNotFound)
 }
 
 func (a *App) deleteCacheEntryAPI(w http.ResponseWriter, r *http.Request) {
