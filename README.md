@@ -1,5 +1,12 @@
 # AnimeAV1 → MyAnimeList Sync
 
+## Cambios de v1.6.0
+
+- Los identificadores grises de AnimeAV1 y MyAnimeList son enlaces en las vistas **Caché**, **Encontrados** y **Actualizados**.
+- Los MAL ID abren directamente la ficha correspondiente en MyAnimeList, incluidos los segundos IDs de temporadas divididas.
+- Los IDs internos de AnimeAV1 se resuelven contra la biblioteca para abrir la ficha exacta mediante su `slug` real.
+- Los enlaces se abren en una pestaña nueva y conservan el estilo visual gris de la interfaz.
+
 ## Cambios de v1.5.6
 
 - La asignación manual se integra directamente en cada error de matching.
