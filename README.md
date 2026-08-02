@@ -1,5 +1,11 @@
 # AnimeAV1 → MyAnimeList Sync
 
+## Cambios de v1.6.1
+
+- Se elimina del panel principal la sección de logs en directo.
+- El botón **Historial** pasa a llamarse **Logs** y continúa abriendo el historial completo en otra pestaña.
+- Se conservan las rutas y el almacenamiento persistente de logs.
+
 ## Cambios de v1.6.0
 
 - Los identificadores grises de AnimeAV1 y MyAnimeList son enlaces en las vistas **Caché**, **Encontrados** y **Actualizados**.
