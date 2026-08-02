@@ -21,18 +21,6 @@ docker buildx version >/dev/null 2>&1 || fail "Docker Buildx no está disponible
 cd "$PROJECT_DIR"
 [ -d .git ] || fail "$PROJECT_DIR no es un repositorio Git."
 
-CURRENT_VERSION=""
-if [ -f VERSION ]; then
-  CURRENT_VERSION="v$(tr -d '[:space:]' < VERSION | sed 's/^v//')"
-fi
-
-read -r -p "Versión${CURRENT_VERSION:+ [$CURRENT_VERSION]} (ej. v1.4.0): " VERSION
-VERSION="${VERSION:-$CURRENT_VERSION}"
-VERSION="v${VERSION#v}"
-
-[[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || \
-  fail "Versión no válida. Usa un formato como v1.4.0."
-
 read -r -p "Rama de Git [$DEFAULT_BRANCH]: " BRANCH
 BRANCH="${BRANCH:-$DEFAULT_BRANCH}"
 
@@ -46,17 +34,11 @@ DOCKER_USER="${DOCKER_USER:-$DEFAULT_DOCKER_USER}"
 read -r -p "Repositorio de Docker Hub [$DEFAULT_DOCKER_REPO]: " DOCKER_REPO
 DOCKER_REPO="${DOCKER_REPO:-$DEFAULT_DOCKER_REPO}"
 
-VERSION_IMAGE="${DOCKER_USER}/${DOCKER_REPO}:${VERSION#v}"
-LATEST_IMAGE="${DOCKER_USER}/${DOCKER_REPO}:latest"
-BUILDER="animeav1-arm-builder"
-
-# Arranca un agente SSH solo cuando esta sesión no tiene uno utilizable.
 if ! ssh-add -l >/dev/null 2>&1; then
   eval "$(ssh-agent -s)" >/dev/null
 fi
 ssh-add "$SSH_KEY"
 
-# Verifica que el remoto SSH funciona antes de modificar o publicar nada.
 git remote get-url origin >/dev/null 2>&1 || fail "No existe el remoto Git 'origin'."
 REMOTE_URL="$(git remote get-url origin)"
 case "$REMOTE_URL" in
@@ -64,52 +46,59 @@ case "$REMOTE_URL" in
   *) echo "AVISO: origin no parece usar SSH: $REMOTE_URL" ;;
 esac
 
-git fetch origin "$BRANCH"
 CURRENT_BRANCH="$(git branch --show-current)"
 [ "$CURRENT_BRANCH" = "$BRANCH" ] || fail "Estás en '$CURRENT_BRANCH'. Cambia a '$BRANCH' antes de publicar."
 
-if ! git merge-base --is-ancestor "origin/$BRANCH" HEAD; then
-  fail "La rama local no contiene los últimos cambios de origin/$BRANCH. Haz pull/rebase primero."
-fi
-
-if git rev-parse "$VERSION" >/dev/null 2>&1; then
-  fail "La etiqueta Git $VERSION ya existe. Usa una versión nueva."
-fi
-
-# VERSION se guarda sin la v porque el código ya la añade al mostrarla.
-printf '%s\n' "${VERSION#v}" > VERSION
-
-# Mantiene el stack de Portainer fijado a esta versión concreta.
-if [ -f docker-compose.portainer.yml ]; then
-  sed -i.bak -E \
-    "s#^([[:space:]]*image:)[[:space:]].*#\1 ${VERSION_IMAGE}#" \
-    docker-compose.portainer.yml
-  rm -f docker-compose.portainer.yml.bak
-fi
-
-git add -A
-
-echo
-echo "Cambios que se publicarán:"
-git status --short
-
-if git diff --cached --quiet; then
-  fail "No hay cambios preparados. Actualiza el código o usa una versión distinta."
+if [ -n "$(git status --porcelain)" ]; then
+  fail "Hay cambios locales sin guardar. Este flujo publica únicamente commits de origin/$BRANCH."
 fi
 
 echo
-read -r -p "¿Publicar $VERSION en GitHub y Docker Hub? [y/N]: " CONFIRM
+echo "Descargando la última versión de origin/$BRANCH..."
+git fetch --tags origin "$BRANCH"
+git pull --ff-only origin "$BRANCH"
+
+if [ -n "$(git status --porcelain)" ]; then
+  fail "El repositorio dejó cambios locales después del pull. Revisa el estado antes de publicar."
+fi
+
+[ -f VERSION ] || fail "Falta el archivo VERSION."
+REPO_VERSION="v$(tr -d '[:space:]' < VERSION | sed 's/^v//')"
+[[ "$REPO_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || \
+  fail "VERSION no contiene una versión válida: $REPO_VERSION"
+
+read -r -p "Versión [$REPO_VERSION]: " VERSION
+VERSION="${VERSION:-$REPO_VERSION}"
+VERSION="v${VERSION#v}"
+[ "$VERSION" = "$REPO_VERSION" ] || \
+  fail "La versión solicitada ($VERSION) no coincide con la preparada en el repositorio ($REPO_VERSION)."
+
+VERSION_IMAGE="${DOCKER_USER}/${DOCKER_REPO}:${VERSION#v}"
+LATEST_IMAGE="${DOCKER_USER}/${DOCKER_REPO}:latest"
+BUILDER="animeav1-arm-builder"
+HEAD_COMMIT="$(git rev-parse HEAD)"
+
+grep -Fq "appVersion = \"${VERSION#v}\"" main.go || \
+  fail "main.go no contiene appVersion = \"${VERSION#v}\"."
+grep -Fq "image: ${VERSION_IMAGE}" docker-compose.portainer.yml || \
+  fail "docker-compose.portainer.yml no apunta a ${VERSION_IMAGE}."
+
+echo
+echo "Commit que se publicará:"
+git --no-pager log -1 --oneline
+echo "Imagen: $VERSION_IMAGE"
+read -r -p "¿Crear/publicar la imagen Docker? [y/N]: " CONFIRM
 [[ "$CONFIRM" =~ ^[Yy]$ ]] || { echo "Cancelado."; exit 0; }
 
-# El commit se crea antes del build para que la imagen publicada corresponda
-# exactamente al código etiquetado en GitHub.
-git commit -m "$VERSION"
-git tag -a "$VERSION" -m "Release $VERSION"
-
-echo
-echo "Subiendo commit y etiqueta a GitHub..."
-git push origin "$BRANCH"
-git push origin "$VERSION"
+if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+  TAG_COMMIT="$(git rev-list -n 1 "$VERSION")"
+  [ "$TAG_COMMIT" = "$HEAD_COMMIT" ] || \
+    fail "La etiqueta $VERSION ya existe, pero apunta a otro commit ($TAG_COMMIT)."
+  echo "La etiqueta $VERSION ya apunta al commit actual; se reutilizará."
+else
+  git tag -a "$VERSION" -m "Release $VERSION" "$HEAD_COMMIT"
+  git push origin "$VERSION"
+fi
 
 echo
 echo "Usando las credenciales guardadas por Docker Desktop para Docker Hub."
@@ -134,7 +123,8 @@ docker buildx build \
 
 echo
 echo "Publicación completada"
-echo "  GitHub:     $BRANCH + etiqueta $VERSION"
+echo "  GitHub:     $BRANCH @ $HEAD_COMMIT"
+echo "  Etiqueta:   $VERSION"
 echo "  Docker Hub: $VERSION_IMAGE"
 echo "  Docker Hub: $LATEST_IMAGE"
 echo
