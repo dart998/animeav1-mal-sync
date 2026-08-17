@@ -129,6 +129,7 @@ func (a *App) runReverseSync(trigger string) {
 	a.mu.Unlock()
 
 	conflicts := make([]ReverseConflict, 0)
+	claimedMedia := map[string]MALListItem{}
 	for idx, mal := range malItems {
 		if ctx.Err() != nil {
 			last.Status = "cancelled"
@@ -153,6 +154,15 @@ func (a *App) runReverseSync(trigger string) {
 			last.Items = append(last.Items, RunItem{MALID: mal.ID, MALTitle: mal.Title, SourceTitle: mal.Title, MatchScore: score, Result: "error", Message: err.Error()})
 			continue
 		}
+
+		claimKey := string(mediaID)
+		if previous, ok := claimedMedia[claimKey]; ok && previous.ID != mal.ID {
+			msg := fmt.Sprintf("Colisión de coincidencia: MAL #%d (%s) y MAL #%d (%s) apuntan al mismo AnimeAV1 media_id=%s. No se modifica la segunda entrada; requiere revisión manual.", previous.ID, previous.Title, mal.ID, mal.Title, mediaID)
+			last.Errors++
+			last.Items = append(last.Items, RunItem{MediaID: mediaID, MALID: mal.ID, MALTitle: mal.Title, SourceTitle: mal.Title, MatchScore: score, Result: "error", Message: msg})
+			continue
+		}
+		claimedMedia[claimKey] = mal
 
 		av, exists := avByID[string(mediaID)]
 		if !exists {

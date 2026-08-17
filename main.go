@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	appVersion = "1.7.0-rc1"
+	appVersion = "1.7.0-rc2"
 	authURL    = "https://myanimelist.net/v1/oauth2/authorize"
 	tokenURL   = "https://myanimelist.net/v1/oauth2/token"
 	apiBase    = "https://api.myanimelist.net/v2"
