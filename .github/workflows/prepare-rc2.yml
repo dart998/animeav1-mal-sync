@@ -1,0 +1,39 @@
+name: Prepare reverse sync RC2
+
+on:
+  push:
+    branches: [feature/mal-to-animeav1]
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/mal-to-animeav1
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Apply RC2 patch
+        run: python3 tools/prepare_rc2.py
+      - name: Format
+        run: gofmt -w main.go reverse_sync.go reverse_conflicts.go reverse_runtime.go
+      - name: Test
+        run: go test ./...
+      - name: Commit RC2
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No RC2 changes pending"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add main.go reverse_runtime.go VERSION docker-compose.portainer.yml
+          git commit -m "Fix reverse sync duplicate media collisions for RC2"
+          git push origin HEAD:feature/mal-to-animeav1
