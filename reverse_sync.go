@@ -15,13 +15,13 @@ import (
 // MALListItem representa una entrada de la lista del usuario en MAL para la
 // sincronización inversa. AnimeAV1 sigue siendo el único destino en este modo.
 type MALListItem struct {
-	ID          int
-	Title       string
-	Aliases     []string
-	Episodes    int
-	Seen        int
-	Status      string
-	MediaType   string
+	ID        int
+	Title     string
+	Aliases   []string
+	Episodes  int
+	Seen      int
+	Status    string
+	MediaType string
 }
 
 type malListPage struct {

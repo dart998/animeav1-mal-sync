@@ -19,8 +19,8 @@ const (
 // progreso no se puede comparar 1:1 entre AnimeAV1 y MAL. La elección persiste y
 // se considera fuente de verdad en sincronizaciones futuras.
 type ReverseResolution struct {
-	MediaID          IDString `json:"media_id"`
-	MALID            int      `json:"mal_id"`
+	MediaID           IDString `json:"media_id"`
+	MALID             int      `json:"mal_id"`
 	AnimeAV1Title     string   `json:"animeav1_title"`
 	MALTitle          string   `json:"mal_title"`
 	PreferredSource   string   `json:"preferred_source"`
@@ -93,8 +93,8 @@ func (a *App) reverseEpisodeConflict(av AVItem, mal MALListItem) (ReverseResolut
 		return saved, false
 	}
 	return ReverseResolution{
-		MediaID:          av.MediaID,
-		MALID:            mal.ID,
+		MediaID:           av.MediaID,
+		MALID:             mal.ID,
 		AnimeAV1Title:     av.Title,
 		MALTitle:          mal.Title,
 		AnimeAV1SeenAtSet: av.Seen,
