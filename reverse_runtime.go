@@ -3,28 +3,29 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 )
 
 type ReverseConflict struct {
-	MediaID      IDString `json:"media_id"`
-	MALID        int      `json:"mal_id"`
+	MediaID       IDString `json:"media_id"`
+	MALID         int      `json:"mal_id"`
 	AnimeAV1Title string   `json:"animeav1_title"`
-	MALTitle     string   `json:"mal_title"`
-	AnimeAV1Seen int      `json:"animeav1_seen"`
-	MALSeen      int      `json:"mal_seen"`
-	AnimeAV1Slug string   `json:"animeav1_slug"`
-	Reason       string   `json:"reason"`
+	MALTitle      string   `json:"mal_title"`
+	AnimeAV1Seen  int      `json:"animeav1_seen"`
+	MALSeen       int      `json:"mal_seen"`
+	AnimeAV1Slug  string   `json:"animeav1_slug"`
+	Reason        string   `json:"reason"`
 }
 
-func (a *App) animeAV1UpdateEpisode(ctx context.Context, cookie string, mediaID IDString, status, episode int) error {
-	// Capturado en HAR real de AnimeAV1 (SvelteKit/Superforms):
+func (a *App) animeAV1SetEpisode(ctx context.Context, cookie string, mediaID IDString, status, episode int) error {
+	// Capturado en un HAR real de AnimeAV1 (SvelteKit/Superforms):
 	// __superform_json=[{"status":1,"rating":2,"episode":3,"notes":4,"startDate":2,"endDate":2,"private":5,"mediaId":6},status,null,episode,"",false,mediaId]
 	payload := []any{
 		map[string]int{"status": 1, "rating": 2, "episode": 3, "notes": 4, "startDate": 2, "endDate": 2, "private": 5, "mediaId": 6},
@@ -58,14 +59,8 @@ func (a *App) animeAV1UpdateEpisode(ctx context.Context, cookie string, mediaID 
 	return nil
 }
 
-func (a *App) reverseConflictPath() string { return filepathJoin(a.dataDir, "reverse_conflicts.json") }
-
-func filepathJoin(parts ...string) string {
-	return strings.Join(parts, string(osPathSeparator()))
-}
-
-func osPathSeparator() rune {
-	return '/'
+func (a *App) reverseConflictPath() string {
+	return filepath.Join(a.dataDir, "reverse_conflicts.json")
 }
 
 func (a *App) saveReverseConflicts(items []ReverseConflict) error {
@@ -73,15 +68,11 @@ func (a *App) saveReverseConflicts(items []ReverseConflict) error {
 	if err != nil {
 		return err
 	}
-	return osWriteFile(a.reverseConflictPath(), append(b, '\n'), 0600)
-}
-
-func osWriteFile(name string, data []byte, perm uint32) error {
-	return writeFileCompat(name, data, perm)
-}
-
-func writeFileCompat(name string, data []byte, perm uint32) error {
-	return os.WriteFile(name, data, fs.FileMode(perm))
+	tmp := a.reverseConflictPath() + ".tmp"
+	if err := os.WriteFile(tmp, append(b, '\n'), 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, a.reverseConflictPath())
 }
 
 func (a *App) loadReverseConflicts() []ReverseConflict {
@@ -172,7 +163,7 @@ func (a *App) runReverseSync(trigger string) {
 					continue
 				}
 				if mal.Seen > 0 {
-					if err := a.animeAV1UpdateEpisode(ctx, cookie, mediaID, status, mal.Seen); err != nil {
+					if err := a.animeAV1SetEpisode(ctx, cookie, mediaID, status, mal.Seen); err != nil {
 						last.Errors++
 						last.Items = append(last.Items, RunItem{MediaID: mediaID, MALID: mal.ID, MALTitle: mal.Title, SourceTitle: mal.Title, From: 0, To: mal.Seen, Result: "error", Message: "Añadido, pero no se pudo guardar progreso: " + err.Error()})
 						continue
@@ -181,17 +172,17 @@ func (a *App) runReverseSync(trigger string) {
 			}
 			last.Updated++
 			msg := "Añadido a AnimeAV1 con estado y progreso de MAL"
-			if dry { msg = "Simulado · " + msg }
+			if dry {
+				msg = "Simulado · " + msg
+			}
 			last.Items = append(last.Items, RunItem{MediaID: mediaID, MALID: mal.ID, MALTitle: mal.Title, SourceTitle: mal.Title, From: 0, To: mal.Seen, Status: mal.Status, Result: "updated", Message: msg})
 			continue
 		}
 
 		if av.Seen != mal.Seen {
 			if saved, ok := a.reverseResolution(av.MediaID, mal.ID); ok {
-				// Una decisión manual previa elimina el conflicto. Solo se modifica AV1
-				// cuando el usuario eligió explícitamente MAL como fuente de verdad.
 				if saved.PreferredSource == ReverseTruthMAL && !dry {
-					if err := a.animeAV1UpdateEpisode(ctx, cookie, av.MediaID, status, mal.Seen); err != nil {
+					if err := a.animeAV1SetEpisode(ctx, cookie, av.MediaID, status, mal.Seen); err != nil {
 						last.Errors++
 						last.Items = append(last.Items, RunItem{MediaID: av.MediaID, MALID: mal.ID, MALTitle: mal.Title, SourceTitle: av.Title, From: av.Seen, To: mal.Seen, Result: "error", Message: err.Error()})
 						continue
@@ -216,24 +207,38 @@ func (a *App) runReverseSync(trigger string) {
 				}
 			}
 			last.Updated++
-			last.Items = append(last.Items, RunItem{MediaID: av.MediaID, MALID: mal.ID, MALTitle: mal.Title, SourceTitle: av.Title, From: av.Seen, To: mal.Seen, Status: mal.Status, Result: "updated", Message: map[bool]string{true:"Simulado · estado", false:"Estado actualizado en AnimeAV1"}[dry]})
+			msg := "Estado actualizado en AnimeAV1"
+			if dry {
+				msg = "Simulado · estado"
+			}
+			last.Items = append(last.Items, RunItem{MediaID: av.MediaID, MALID: mal.ID, MALTitle: mal.Title, SourceTitle: av.Title, From: av.Seen, To: mal.Seen, Status: mal.Status, Result: "updated", Message: msg})
 		} else {
 			last.Skipped++
 		}
+		a.mu.Lock()
+		a.progressProcessed = idx + 1
+		a.mu.Unlock()
 	}
 
 	_ = a.saveReverseConflicts(conflicts)
 	if last.Status != "cancelled" {
-		if last.Errors > 0 { last.Status = "partial" }
+		if last.Errors > 0 {
+			last.Status = "partial"
+		}
 		last.Message = fmt.Sprintf("MAL → AnimeAV1: encontrados %d, actualizados %d, omitidos %d, conflictos/errores %d", last.Found, last.Updated, last.Skipped, last.Errors)
 	}
 	a.finish(last)
 }
 
 func (a *App) reverseSyncHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost { http.Error(w, "POST", http.StatusMethodNotAllowed); return }
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST", http.StatusMethodNotAllowed)
+		return
+	}
 	r.ParseForm()
-	if r.FormValue("interval") != "" { a.saveSettingsNoRedirect(r) }
+	if r.FormValue("interval") != "" {
+		a.saveSettingsNoRedirect(r)
+	}
 	go a.runReverseSync("manual")
 	redirectHome(w, r)
 }
@@ -245,20 +250,31 @@ func (a *App) reverseConflictsAPI(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) reverseResolveAPI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	if r.Method != http.MethodPost { w.WriteHeader(http.StatusMethodNotAllowed); return }
-	if err := r.ParseForm(); err != nil { http.Error(w, err.Error(), 400); return }
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	mediaID := IDString(strings.TrimSpace(r.FormValue("media_id")))
 	malID, _ := strconv.Atoi(r.FormValue("mal_id"))
 	preferred := strings.TrimSpace(r.FormValue("preferred_source"))
 	avSeen, _ := strconv.Atoi(r.FormValue("animeav1_seen"))
 	malSeen, _ := strconv.Atoi(r.FormValue("mal_seen"))
 	v := ReverseResolution{MediaID: mediaID, MALID: malID, AnimeAV1Title: r.FormValue("animeav1_title"), MALTitle: r.FormValue("mal_title"), PreferredSource: preferred, AnimeAV1SeenAtSet: avSeen, MALSeenAtSet: malSeen}
-	if err := a.setReverseResolution(v); err != nil { http.Error(w, err.Error(), 400); return }
+	if err := a.setReverseResolution(v); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	items := a.loadReverseConflicts()
 	kept := items[:0]
-	for _, c := range items { if !(c.MediaID == mediaID && c.MALID == malID) { kept = append(kept, c) } }
+	for _, c := range items {
+		if !(c.MediaID == mediaID && c.MALID == malID) {
+			kept = append(kept, c)
+		}
+	}
 	_ = a.saveReverseConflicts(kept)
 	json.NewEncoder(w).Encode(map[string]any{"ok": true, "resolution": v})
 }
-
-var _ = errors.Is
