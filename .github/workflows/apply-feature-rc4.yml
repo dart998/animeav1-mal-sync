@@ -1,0 +1,36 @@
+name: Apply feature RC4 patch
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  apply:
+    if: github.event.issue.title == '[RC4] apply feature patch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/mal-to-animeav1
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Apply patch
+        run: python3 tools/prepare_rc4.py
+      - name: Format
+        run: gofmt -w main.go reverse_sync.go reverse_conflicts.go reverse_runtime.go
+      - name: Test
+        run: go test ./...
+      - name: Commit and push RC4
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add main.go reverse_runtime.go VERSION docker-compose.portainer.yml
+          git commit -m "RC4: accept AnimeAV1 URL or slug for reverse manual matching"
+          git push origin HEAD:feature/mal-to-animeav1
