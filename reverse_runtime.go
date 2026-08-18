@@ -142,6 +142,20 @@ func (a *App) runReverseSync(trigger string) {
 		a.progressMessage = "MAL → AnimeAV1: " + mal.Title
 		a.mu.Unlock()
 
+		if mal.AirStatus == "not_yet_aired" {
+			last.Skipped++
+			msg := "Próximamente · MAL indica que todavía no se ha estrenado; no se busca en AnimeAV1"
+			if mal.StartDate != "" {
+				msg += " · estreno: " + mal.StartDate
+			}
+			last.Items = append(last.Items, RunItem{MALID: mal.ID, MALTitle: mal.Title, SourceTitle: mal.Title, From: mal.Seen, To: mal.Seen, Status: mal.Status, Result: "skipped", Message: msg})
+			a.mu.Lock()
+			a.progressProcessed = idx + 1
+			a.progressMessage = "Próximamente en MAL: " + mal.Title
+			a.mu.Unlock()
+			continue
+		}
+
 		status, err := avStatusFromMAL(mal.Status)
 		if err != nil {
 			last.Errors++

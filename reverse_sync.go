@@ -22,6 +22,8 @@ type MALListItem struct {
 	Seen      int
 	Status    string
 	MediaType string
+	AirStatus string
+	StartDate string
 }
 
 type malListPage struct {
@@ -31,6 +33,8 @@ type malListPage struct {
 			Title             string `json:"title"`
 			NumEpisodes       int    `json:"num_episodes"`
 			MediaType         string `json:"media_type"`
+			Status            string `json:"status"`
+			StartDate         string `json:"start_date"`
 			AlternativeTitles struct {
 				Synonyms []string `json:"synonyms"`
 				English  string   `json:"en"`
@@ -79,7 +83,7 @@ func avStatusFromMAL(status string) (int, error) {
 }
 
 func (a *App) fetchMALList(ctx context.Context) ([]MALListItem, error) {
-	const fields = "list_status,num_episodes,media_type,alternative_titles"
+	const fields = "list_status,num_episodes,media_type,alternative_titles,status,start_date"
 	offset := 0
 	out := make([]MALListItem, 0, 256)
 
@@ -106,6 +110,8 @@ func (a *App) fetchMALList(ctx context.Context) ([]MALListItem, error) {
 				Seen:      row.ListStatus.NumEpisodesWatched,
 				Status:    row.ListStatus.Status,
 				MediaType: row.Node.MediaType,
+				AirStatus: row.Node.Status,
+				StartDate: row.Node.StartDate,
 			})
 		}
 		if page.Paging.Next == "" || len(page.Data) == 0 {
