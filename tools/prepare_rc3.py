@@ -1,5 +1,6 @@
 from pathlib import Path
 
+# RC3: reverse unmatched results must ask for AnimeAV1 ID, not MAL IDs.
 main = Path('main.go')
 s = main.read_text(encoding='utf-8')
 
@@ -52,9 +53,6 @@ func (a *App) reverseManualMatchAPI(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// Valida que el MAL ID exista y obtiene su título canónico. El ID de AnimeAV1
-	// lo aporta explícitamente el usuario porque este endpoint existe precisamente
-	// para resolver casos donde el buscador automático de AnimeAV1 no es concluyente.
 	var anime MALAnime
 	fields := "id,title,alternative_titles,num_episodes,media_type,start_date,my_list_status"
 	if err := a.malRequestContext(req.Context(), http.MethodGet, fmt.Sprintf("/anime/%d?fields=%s", malID, fields), nil, &anime); err != nil {
