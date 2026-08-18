@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -289,6 +290,39 @@ func (a *App) reverseResolveAPI(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"ok": true, "resolution": v})
 }
 
+func animeAV1SlugFromRef(raw string) (string, error) {
+	ref := strings.TrimSpace(raw)
+	if ref == "" {
+		return "", errors.New("falta la URL o slug de AnimeAV1")
+	}
+	if strings.Contains(ref, "://") {
+		u, err := url.Parse(ref)
+		if err != nil {
+			return "", errors.New("URL de AnimeAV1 no válida")
+		}
+		host := strings.ToLower(strings.TrimPrefix(u.Hostname(), "www."))
+		if host != "animeav1.com" {
+			return "", errors.New("la URL debe pertenecer a animeav1.com")
+		}
+		ref = u.Path
+	} else {
+		ref = strings.TrimPrefix(ref, "animeav1.com/")
+		ref = strings.TrimPrefix(ref, "www.animeav1.com/")
+	}
+	ref = strings.Trim(ref, "/")
+	if strings.HasPrefix(ref, "media/") {
+		ref = strings.TrimPrefix(ref, "media/")
+	}
+	if i := strings.IndexByte(ref, '/'); i >= 0 {
+		ref = ref[:i]
+	}
+	ref = strings.TrimSpace(ref)
+	if ref == "" || strings.ContainsAny(ref, " ?#") {
+		return "", errors.New("slug de AnimeAV1 no válido")
+	}
+	return ref, nil
+}
+
 func (a *App) reverseManualMatchAPI(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if req.Method != http.MethodPost {
@@ -299,10 +333,14 @@ func (a *App) reverseManualMatchAPI(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	mediaID := IDString(strings.TrimSpace(req.FormValue("media_id")))
 	malID, _ := strconv.Atoi(strings.TrimSpace(req.FormValue("mal_id")))
-	if mediaID == "" || malID <= 0 {
-		http.Error(w, "media_id de AnimeAV1 y mal_id son obligatorios", http.StatusBadRequest)
+	if malID <= 0 {
+		http.Error(w, "mal_id es obligatorio", http.StatusBadRequest)
+		return
+	}
+	slug, err := animeAV1SlugFromRef(req.FormValue("animeav1_ref"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -313,23 +351,51 @@ func (a *App) reverseManualMatchAPI(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	a.mu.Lock()
+	cookie := a.state.Settings.Cookie
+	a.mu.Unlock()
+	queries := []string{strings.ReplaceAll(slug, "-", " "), anime.Title}
+	seenQueries := map[string]bool{}
+	var match animeAV1SearchItem
+	for _, q := range queries {
+		key := normalize(q)
+		if key == "" || seenQueries[key] {
+			continue
+		}
+		seenQueries[key] = true
+		items, searchErr := a.animeAV1Search(req.Context(), cookie, q)
+		if searchErr != nil {
+			continue
+		}
+		for _, candidate := range items {
+			if strings.EqualFold(strings.Trim(candidate.Slug, "/"), slug) {
+				match = candidate
+				break
+			}
+		}
+		if match.ID != "" {
+			break
+		}
+	}
+	if match.ID == "" {
+		http.Error(w, "no se encontró en AnimeAV1 una ficha con el slug "+slug, http.StatusNotFound)
+		return
+	}
+
 	entry := CacheEntry{
-		MediaID:        mediaID,
+		MediaID:        match.ID,
 		MALID:          anime.ID,
 		MALTitle:       anime.Title,
 		MatchType:      "manual_reverse",
 		MatchScore:     999,
-		SourceTitle:    normalize(anime.Title),
+		SourceTitle:    normalize(match.Title),
 		LastValidated:  time.Now().Unix(),
 		UpdatedAt:      time.Now().Unix(),
 		MatcherVersion: appVersion,
-		SearchStrategy: "manual_animeav1_id",
+		SearchStrategy: "manual_animeav1_slug",
 	}
-	if seen, status := animeState(anime); true {
-		entry.MALSeen = seen
-		entry.MALStatus = status
-	}
+	entry.MALSeen, entry.MALStatus = animeState(anime)
 	a.cachePut(entry)
-	a.appendHistory(map[string]any{"ts": time.Now().Unix(), "event": "reverse_manual_match_saved", "media_id": mediaID, "mal_id": anime.ID, "mal_title": anime.Title})
-	json.NewEncoder(w).Encode(map[string]any{"ok": true, "entry": entry})
+	a.appendHistory(map[string]any{"ts": time.Now().Unix(), "event": "reverse_manual_match_saved", "media_id": match.ID, "animeav1_slug": slug, "animeav1_title": match.Title, "mal_id": anime.ID, "mal_title": anime.Title})
+	json.NewEncoder(w).Encode(map[string]any{"ok": true, "entry": entry, "slug": slug, "animeav1_title": match.Title})
 }
