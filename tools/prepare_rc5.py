@@ -1,6 +1,7 @@
 from pathlib import Path
 
 # RC5: skip MAL entries that have not started airing yet and make dry-run text neutral.
+# Triggered after the RC5 workflow is present on the feature branch.
 reverse = Path('reverse_sync.go')
 r = reverse.read_text(encoding='utf-8')
 
