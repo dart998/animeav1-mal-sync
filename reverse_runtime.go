@@ -288,3 +288,48 @@ func (a *App) reverseResolveAPI(w http.ResponseWriter, r *http.Request) {
 	_ = a.saveReverseConflicts(kept)
 	json.NewEncoder(w).Encode(map[string]any{"ok": true, "resolution": v})
 }
+
+func (a *App) reverseManualMatchAPI(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if req.Method != http.MethodPost {
+		http.Error(w, "POST", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := req.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	mediaID := IDString(strings.TrimSpace(req.FormValue("media_id")))
+	malID, _ := strconv.Atoi(strings.TrimSpace(req.FormValue("mal_id")))
+	if mediaID == "" || malID <= 0 {
+		http.Error(w, "media_id de AnimeAV1 y mal_id son obligatorios", http.StatusBadRequest)
+		return
+	}
+
+	var anime MALAnime
+	fields := "id,title,alternative_titles,num_episodes,media_type,start_date,my_list_status"
+	if err := a.malRequestContext(req.Context(), http.MethodGet, fmt.Sprintf("/anime/%d?fields=%s", malID, fields), nil, &anime); err != nil {
+		http.Error(w, "ID de MAL no válido: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	entry := CacheEntry{
+		MediaID:        mediaID,
+		MALID:          anime.ID,
+		MALTitle:       anime.Title,
+		MatchType:      "manual_reverse",
+		MatchScore:     999,
+		SourceTitle:    normalize(anime.Title),
+		LastValidated:  time.Now().Unix(),
+		UpdatedAt:      time.Now().Unix(),
+		MatcherVersion: appVersion,
+		SearchStrategy: "manual_animeav1_id",
+	}
+	if seen, status := animeState(anime); true {
+		entry.MALSeen = seen
+		entry.MALStatus = status
+	}
+	a.cachePut(entry)
+	a.appendHistory(map[string]any{"ts": time.Now().Unix(), "event": "reverse_manual_match_saved", "media_id": mediaID, "mal_id": anime.ID, "mal_title": anime.Title})
+	json.NewEncoder(w).Encode(map[string]any{"ok": true, "entry": entry})
+}
