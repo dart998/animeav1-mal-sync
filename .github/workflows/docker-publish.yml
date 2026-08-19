@@ -1,5 +1,6 @@
 name: Test and publish Docker image
 
+# RC pushes on feature/mal-to-animeav1 publish only the VERSION tag; stable main builds may also publish latest.
 on:
   push:
     branches:
