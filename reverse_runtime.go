@@ -124,6 +124,10 @@ func (a *App) runReverseSync(trigger string) {
 	for _, item := range avItems {
 		avByID[string(item.MediaID)] = item
 	}
+	malByID := map[int]MALListItem{}
+	for _, item := range malItems {
+		malByID[item.ID] = item
+	}
 	last.Found = len(malItems)
 	a.mu.Lock()
 	a.progressTotal = len(malItems)
@@ -131,16 +135,61 @@ func (a *App) runReverseSync(trigger string) {
 
 	conflicts := make([]ReverseConflict, 0)
 	claimedMedia := map[string]MALListItem{}
-	for idx, mal := range malItems {
+	processedMAL := map[int]bool{}
+
+	for idx, original := range malItems {
+		if processedMAL[original.ID] {
+			continue
+		}
 		if ctx.Err() != nil {
 			last.Status = "cancelled"
 			last.Message = "Sincronización inversa detenida"
 			break
 		}
+
+		mal := original
+		var splitSecond *MALListItem
+		forcedMediaID := IDString("")
+		forcedScore := 0
+		cached, cachedOK, cacheErr := a.cachedEntryForMAL(original.ID)
+		if cacheErr != nil {
+			last.Errors++
+			last.Items = append(last.Items, RunItem{MALID: original.ID, MALTitle: original.Title, SourceTitle: original.Title, Result: "error", Message: cacheErr.Error(), Direction: "reverse", ErrorType: "cache_ambiguous"})
+			processedMAL[original.ID] = true
+			continue
+		}
+		if cachedOK && cached.MALID2 > 0 {
+			first, ok1 := malByID[cached.MALID]
+			second, ok2 := malByID[cached.MALID2]
+			if ok1 && ok2 {
+				mal = aggregateSplitMAL(first, second)
+				splitCopy := second
+				splitSecond = &splitCopy
+				forcedMediaID = cached.MediaID
+				forcedScore = 999
+				processedMAL[first.ID] = true
+				processedMAL[second.ID] = true
+			}
+		}
+		if !processedMAL[original.ID] {
+			processedMAL[original.ID] = true
+		}
+
 		a.mu.Lock()
 		a.progressProcessed = idx
 		a.progressMessage = "MAL → AnimeAV1: " + mal.Title
 		a.mu.Unlock()
+
+		baseItem := func() RunItem {
+			ri := RunItem{MALID: mal.ID, MALTitle: mal.Title, SourceTitle: mal.Title, Direction: "reverse"}
+			if splitSecond != nil {
+				ri.MALID = cached.MALID
+				ri.MALTitle = malByID[cached.MALID].Title
+				ri.MALID2 = cached.MALID2
+				ri.MALTitle2 = splitSecond.Title
+			}
+			return ri
+		}
 
 		if mal.AirStatus == "not_yet_aired" {
 			last.Skipped++
@@ -148,33 +197,47 @@ func (a *App) runReverseSync(trigger string) {
 			if mal.StartDate != "" {
 				msg += " · estreno: " + mal.StartDate
 			}
-			last.Items = append(last.Items, RunItem{MALID: mal.ID, MALTitle: mal.Title, SourceTitle: mal.Title, From: mal.Seen, To: mal.Seen, Status: mal.Status, Result: "skipped", Message: msg})
-			a.mu.Lock()
-			a.progressProcessed = idx + 1
-			a.progressMessage = "Próximamente en MAL: " + mal.Title
-			a.mu.Unlock()
+			ri := baseItem()
+			ri.From, ri.To, ri.Status, ri.Result, ri.Message = mal.Seen, mal.Seen, mal.Status, "skipped", msg
+			last.Items = append(last.Items, ri)
 			continue
 		}
 
 		status, err := avStatusFromMAL(mal.Status)
 		if err != nil {
 			last.Errors++
-			last.Items = append(last.Items, RunItem{MALID: mal.ID, MALTitle: mal.Title, SourceTitle: mal.Title, Result: "error", Message: err.Error()})
+			ri := baseItem()
+			ri.Result, ri.Message, ri.ErrorType = "error", err.Error(), "mal_status"
+			last.Items = append(last.Items, ri)
 			continue
 		}
-		mediaID, _, score, err := a.resolveAnimeAV1Media(ctx, cookie, mal)
-		if err != nil {
-			last.Errors++
-			last.Unmatched = append(last.Unmatched, mal.Title+": "+err.Error())
-			last.Items = append(last.Items, RunItem{MALID: mal.ID, MALTitle: mal.Title, SourceTitle: mal.Title, MatchScore: score, Result: "error", Message: err.Error()})
-			continue
+
+		var mediaID IDString
+		var score int
+		if forcedMediaID != "" {
+			mediaID, score = forcedMediaID, forcedScore
+		} else {
+			mediaID, _, score, err = a.resolveAnimeAV1Media(ctx, cookie, mal)
+			if err != nil {
+				last.Errors++
+				last.Unmatched = append(last.Unmatched, mal.Title+": "+err.Error())
+				ri := baseItem()
+				ri.MatchScore, ri.Result, ri.Message = score, "error", err.Error()
+				if mediaID == "" {
+					ri.ErrorType = "animeav1_unmatched"
+				}
+				last.Items = append(last.Items, ri)
+				continue
+			}
 		}
 
 		claimKey := string(mediaID)
 		if previous, ok := claimedMedia[claimKey]; ok && previous.ID != mal.ID {
 			msg := fmt.Sprintf("Colisión de coincidencia: MAL #%d (%s) y MAL #%d (%s) apuntan al mismo AnimeAV1 media_id=%s. No se modifica la segunda entrada; requiere revisión manual.", previous.ID, previous.Title, mal.ID, mal.Title, mediaID)
 			last.Errors++
-			last.Items = append(last.Items, RunItem{MediaID: mediaID, MALID: mal.ID, MALTitle: mal.Title, SourceTitle: mal.Title, MatchScore: score, Result: "error", Message: msg})
+			ri := baseItem()
+			ri.MediaID, ri.MatchScore, ri.Result, ri.Message, ri.ErrorType = mediaID, score, "error", msg, "media_collision"
+			last.Items = append(last.Items, ri)
 			continue
 		}
 		claimedMedia[claimKey] = mal
@@ -184,42 +247,61 @@ func (a *App) runReverseSync(trigger string) {
 			if !dry {
 				if err := a.animeAV1UpdateStatus(ctx, cookie, mediaID, status); err != nil {
 					last.Errors++
-					last.Items = append(last.Items, RunItem{MediaID: mediaID, MALID: mal.ID, MALTitle: mal.Title, SourceTitle: mal.Title, Result: "error", Message: "No se pudo añadir a AnimeAV1: " + err.Error()})
+					ri := baseItem()
+					ri.MediaID, ri.Result, ri.Message, ri.ErrorType = mediaID, "error", "No se pudo añadir a AnimeAV1: "+err.Error(), "animeav1_write"
+					last.Items = append(last.Items, ri)
 					continue
 				}
 				if mal.Seen > 0 {
 					if err := a.animeAV1SetEpisode(ctx, cookie, mediaID, status, mal.Seen); err != nil {
 						last.Errors++
-						last.Items = append(last.Items, RunItem{MediaID: mediaID, MALID: mal.ID, MALTitle: mal.Title, SourceTitle: mal.Title, From: 0, To: mal.Seen, Result: "error", Message: "Añadido, pero no se pudo guardar progreso: " + err.Error()})
+						ri := baseItem()
+						ri.MediaID, ri.From, ri.To, ri.Result, ri.Message, ri.ErrorType = mediaID, 0, mal.Seen, "error", "Añadido, pero no se pudo guardar progreso: "+err.Error(), "animeav1_write"
+						last.Items = append(last.Items, ri)
 						continue
 					}
 				}
 			}
 			last.Updated++
 			msg := "Añadido a AnimeAV1 con estado y progreso de MAL"
+			if splitSecond != nil {
+				msg = "Temporada partida reconocida · " + msg
+			}
 			if dry {
 				msg = "Simulado · " + msg
 			}
-			last.Items = append(last.Items, RunItem{MediaID: mediaID, MALID: mal.ID, MALTitle: mal.Title, SourceTitle: mal.Title, From: 0, To: mal.Seen, Status: mal.Status, Result: "updated", Message: msg})
+			ri := baseItem()
+			ri.MediaID, ri.From, ri.To, ri.Status, ri.Result, ri.Message = mediaID, 0, mal.Seen, mal.Status, "updated", msg
+			last.Items = append(last.Items, ri)
 			continue
 		}
 
 		if av.Seen != mal.Seen {
-			if saved, ok := a.reverseResolution(av.MediaID, mal.ID); ok {
+			resolutionMALID := mal.ID
+			if splitSecond != nil {
+				resolutionMALID = cached.MALID
+			}
+			if saved, ok := a.reverseResolution(av.MediaID, resolutionMALID); ok {
 				if saved.PreferredSource == ReverseTruthMAL && !dry {
 					if err := a.animeAV1SetEpisode(ctx, cookie, av.MediaID, status, mal.Seen); err != nil {
 						last.Errors++
-						last.Items = append(last.Items, RunItem{MediaID: av.MediaID, MALID: mal.ID, MALTitle: mal.Title, SourceTitle: av.Title, From: av.Seen, To: mal.Seen, Result: "error", Message: err.Error()})
+						ri := baseItem()
+						ri.MediaID, ri.From, ri.To, ri.Result, ri.Message, ri.ErrorType = av.MediaID, av.Seen, mal.Seen, "error", err.Error(), "animeav1_write"
+						last.Items = append(last.Items, ri)
 						continue
 					}
 				}
 				last.Skipped++
-				last.Items = append(last.Items, RunItem{MediaID: av.MediaID, MALID: mal.ID, MALTitle: mal.Title, SourceTitle: av.Title, From: av.Seen, To: mal.Seen, Result: "skipped", Message: "Conflicto resuelto previamente · fuente: " + saved.PreferredSource})
+				ri := baseItem()
+				ri.MediaID, ri.SourceTitle, ri.From, ri.To, ri.Result, ri.Message = av.MediaID, av.Title, av.Seen, mal.Seen, "skipped", "Conflicto resuelto previamente · fuente: "+saved.PreferredSource
+				last.Items = append(last.Items, ri)
 				continue
 			}
-			conflicts = append(conflicts, ReverseConflict{MediaID: av.MediaID, MALID: mal.ID, AnimeAV1Title: av.Title, MALTitle: mal.Title, AnimeAV1Seen: av.Seen, MALSeen: mal.Seen, AnimeAV1Slug: av.Slug, Reason: "El recuento de episodios difiere entre AnimeAV1 y MAL"})
+			conflicts = append(conflicts, ReverseConflict{MediaID: av.MediaID, MALID: resolutionMALID, AnimeAV1Title: av.Title, MALTitle: mal.Title, AnimeAV1Seen: av.Seen, MALSeen: mal.Seen, AnimeAV1Slug: av.Slug, Reason: "El recuento de episodios difiere entre AnimeAV1 y MAL"})
 			last.Errors++
-			last.Items = append(last.Items, RunItem{MediaID: av.MediaID, MALID: mal.ID, MALTitle: mal.Title, SourceTitle: av.Title, From: av.Seen, To: mal.Seen, Result: "error", Message: "Conflicto de episodios: requiere decisión manual"})
+			ri := baseItem()
+			ri.MediaID, ri.SourceTitle, ri.From, ri.To, ri.Result, ri.Message, ri.ErrorType = av.MediaID, av.Title, av.Seen, mal.Seen, "error", "Conflicto de episodios: requiere decisión manual", "episode_conflict"
+			last.Items = append(last.Items, ri)
 			continue
 		}
 
@@ -227,18 +309,33 @@ func (a *App) runReverseSync(trigger string) {
 			if !dry {
 				if err := a.animeAV1UpdateStatus(ctx, cookie, av.MediaID, status); err != nil {
 					last.Errors++
-					last.Items = append(last.Items, RunItem{MediaID: av.MediaID, MALID: mal.ID, MALTitle: mal.Title, SourceTitle: av.Title, Result: "error", Message: err.Error()})
+					ri := baseItem()
+					ri.MediaID, ri.SourceTitle, ri.Result, ri.Message, ri.ErrorType = av.MediaID, av.Title, "error", err.Error(), "animeav1_write"
+					last.Items = append(last.Items, ri)
 					continue
 				}
 			}
 			last.Updated++
 			msg := "Estado actualizado en AnimeAV1"
+			if splitSecond != nil {
+				msg = "Temporada partida reconocida · " + msg
+			}
 			if dry {
 				msg = "Simulado · estado"
 			}
-			last.Items = append(last.Items, RunItem{MediaID: av.MediaID, MALID: mal.ID, MALTitle: mal.Title, SourceTitle: av.Title, From: av.Seen, To: mal.Seen, Status: mal.Status, Result: "updated", Message: msg})
+			ri := baseItem()
+			ri.MediaID, ri.SourceTitle, ri.From, ri.To, ri.Status, ri.Result, ri.Message = av.MediaID, av.Title, av.Seen, mal.Seen, mal.Status, "updated", msg
+			last.Items = append(last.Items, ri)
 		} else {
 			last.Skipped++
+			ri := baseItem()
+			ri.MediaID, ri.SourceTitle, ri.From, ri.To, ri.Status, ri.Result = av.MediaID, av.Title, av.Seen, mal.Seen, mal.Status, "skipped"
+			if splitSecond != nil {
+				ri.Message = "Temporada partida reconocida · sin cambios"
+			} else {
+				ri.Message = "Sin cambios"
+			}
+			last.Items = append(last.Items, ri)
 		}
 		a.mu.Lock()
 		a.progressProcessed = idx + 1
@@ -393,6 +490,14 @@ func (a *App) reverseManualMatchAPI(w http.ResponseWriter, req *http.Request) {
 	}
 	if match.ID == "" {
 		http.Error(w, "no se encontró en AnimeAV1 una ficha con el slug "+slug, http.StatusNotFound)
+		return
+	}
+
+	if existing, ok, lookupErr := a.cachedEntryForMAL(anime.ID); lookupErr != nil {
+		http.Error(w, lookupErr.Error(), http.StatusConflict)
+		return
+	} else if ok && existing.MediaID != match.ID {
+		http.Error(w, fmt.Sprintf("MAL #%d ya está asociado a AnimeAV1 media_id=%s; elimina o corrige esa coincidencia antes de asignarlo a media_id=%s", anime.ID, existing.MediaID, match.ID), http.StatusConflict)
 		return
 	}
 

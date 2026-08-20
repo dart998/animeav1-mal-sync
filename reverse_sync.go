@@ -186,15 +186,59 @@ func (a *App) animeAV1JSONPost(ctx context.Context, cookie, endpoint string, pay
 // cachedMediaIDForMAL reutiliza la caché ya validada por la sincronización
 // AnimeAV1 -> MAL. Esto evita volver a resolver títulos cuando la relación ya es
 // conocida y es la vía preferente de la sincronización inversa.
-func (a *App) cachedMediaIDForMAL(malID int) (IDString, bool) {
+func (a *App) cachedEntryForMAL(malID int) (CacheEntry, bool, error) {
 	a.cacheMu.Lock()
 	defer a.cacheMu.Unlock()
+	var found CacheEntry
+	have := false
 	for _, entry := range a.cache {
-		if entry.MALID == malID || entry.MALID2 == malID {
-			return entry.MediaID, true
+		if entry.MALID != malID && entry.MALID2 != malID {
+			continue
 		}
+		if have && found.MediaID != entry.MediaID {
+			return CacheEntry{}, false, fmt.Errorf("MAL #%d está asociado a más de una ficha AnimeAV1 (%s y %s); corrige la caché antes de sincronizar", malID, found.MediaID, entry.MediaID)
+		}
+		found = entry
+		have = true
 	}
-	return "", false
+	return found, have, nil
+}
+
+func (a *App) cachedMediaIDForMAL(malID int) (IDString, bool) {
+	entry, ok, err := a.cachedEntryForMAL(malID)
+	if err != nil || !ok {
+		return "", false
+	}
+	return entry.MediaID, true
+}
+
+func aggregateSplitMAL(first, second MALListItem) MALListItem {
+	out := first
+	out.Seen = first.Seen + second.Seen
+	out.Episodes = first.Episodes + second.Episodes
+	out.Title = first.Title + " + " + second.Title
+	out.Aliases = append(append([]string{}, first.Aliases...), second.Aliases...)
+	if first.Status == "completed" && second.Status == "completed" {
+		out.Status = "completed"
+	} else if second.Status == "watching" || first.Status == "watching" {
+		out.Status = "watching"
+	} else if second.Status == "on_hold" || first.Status == "on_hold" {
+		out.Status = "on_hold"
+	} else if second.Status == "dropped" {
+		out.Status = "dropped"
+	} else if first.Seen+second.Seen > 0 {
+		out.Status = "watching"
+	} else if second.Status != "" {
+		out.Status = second.Status
+	}
+	// Una coincidencia partida ya validada representa una sola ficha de AnimeAV1.
+	// No se excluye toda la ficha porque una de las dos partes aún no se haya emitido.
+	if first.AirStatus == "not_yet_aired" && second.AirStatus == "not_yet_aired" {
+		out.AirStatus = "not_yet_aired"
+	} else {
+		out.AirStatus = ""
+	}
+	return out
 }
 
 func bestAnimeAV1SearchMatch(item MALListItem, candidates []animeAV1SearchItem) (animeAV1SearchItem, int) {
@@ -214,8 +258,10 @@ func bestAnimeAV1SearchMatch(item MALListItem, candidates []animeAV1SearchItem) 
 }
 
 func (a *App) resolveAnimeAV1Media(ctx context.Context, cookie string, item MALListItem) (IDString, string, int, error) {
-	if mediaID, ok := a.cachedMediaIDForMAL(item.ID); ok {
-		return mediaID, "cache", 999, nil
+	if entry, ok, err := a.cachedEntryForMAL(item.ID); err != nil {
+		return "", "", -1, err
+	} else if ok {
+		return entry.MediaID, "cache", 999, nil
 	}
 	queries := append([]string{item.Title}, item.Aliases...)
 	seen := map[string]bool{}
