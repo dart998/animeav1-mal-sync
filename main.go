@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	appVersion = "1.7.0-rc5"
+	appVersion = "1.7.0-rc6"
 	authURL    = "https://myanimelist.net/v1/oauth2/authorize"
 	tokenURL   = "https://myanimelist.net/v1/oauth2/token"
 	apiBase    = "https://api.myanimelist.net/v2"
@@ -209,6 +209,20 @@ func getenvBool(k string, d bool) bool {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		client := &http.Client{Timeout: 4 * time.Second}
+		resp, err := client.Get("http://127.0.0.1:8787/health")
+		if err != nil {
+			os.Exit(1)
+		}
+		defer resp.Body.Close()
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			os.Exit(1)
+		}
+		return
+	}
+
 	app := &App{
 		dataDir: getenv("DATA_DIR", "/data"),
 		client:  &http.Client{Timeout: 60 * time.Second},
@@ -223,9 +237,10 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", app.dashboard)
 	mux.HandleFunc("/favicon.svg", favicon)
-	mux.HandleFunc("/health", app.health)
+	mux.HandleFunc("/health", app.healthCheckHTTP)
 	mux.HandleFunc("/api/status", app.health)
 	mux.HandleFunc("/api/logs", app.logsAPI)
+	mux.HandleFunc("/log", app.history)
 	mux.HandleFunc("/cookie", app.saveCookie)
 	mux.HandleFunc("/settings", app.saveSettings)
 	mux.HandleFunc("/check", app.check)
@@ -254,6 +269,13 @@ func main() {
 	addr := getenv("LISTEN_ADDR", ":8787")
 	log.Printf("AnimeAV1 MAL Sync escuchando en %s", addr)
 	log.Fatal(http.ListenAndServe(addr, mux))
+}
+
+func (a *App) healthCheckHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = fmt.Fprintf(w, `{"status":"ok","version":%q}`, appVersion)
 }
 
 func favicon(w http.ResponseWriter, r *http.Request) {
@@ -485,7 +507,7 @@ body{font-family:Arial,sans-serif;background:#111827;color:#e5e7eb;max-width:100
 <div class="card"><h2>AnimeAV1</h2><p>%s</p><form method="post" action="/cookie"><label>Cookie completa del navegador</label><textarea name="cookie" rows="3" placeholder="session=...; otra_cookie=...">%s</textarea><button>Guardar cookie</button> <a class="btn secondary" href="/check">Verificar</a></form></div>
 <div class="card"><h2>MyAnimeList</h2><p>%s</p><a class="btn" href="/oauth/start">Conectar con MAL</a> <a class="btn danger" href="/oauth/disconnect">Desconectar</a></div>
 <div class="card"><h2>Sincronización</h2><form method="post" action="/settings"><label>Intervalo en minutos</label><input type="number" min="1" name="interval" value="%d"><label><input style="width:auto" type="checkbox" name="dry" %s> Modo simulación (no escribe cambios)</label><br><label><input style="width:auto" type="checkbox" name="increase" %s> Solo aumentar episodios</label><br><label><input style="width:auto" type="checkbox" name="auto" %s> Sincronización automática</label><br><br><button>Guardar ajustes</button> <button formaction="/sync">AnimeAV1 → MAL</button> <button formaction="/sync/reverse" class="secondary">MAL → AnimeAV1</button></form><form method="post" action="/sync/stop" style="display:inline"><button id="stopButton" class="danger" style="display:none">Detener sincronización</button></form> <button class="secondary" onclick="openCache()">Ver caché</button> <form method="post" action="/cache/clear" style="display:inline" onsubmit="return confirm('¿Eliminar toda la caché?')"><button id="clearCacheButton" class="secondary">Eliminar caché</button></form><p class="muted">Caché persistente: <b id="cacheCount">%d</b> coincidencias.</p><div id="progressWrap" class="progress-wrap"><div class="progress-track"><div id="progressBar" class="progress-bar"></div></div><div id="progressLabel" class="progress-label"></div></div></div>
-<div class="card"><h2>Estado</h2><div class="grid"><div class="stat"><b>Ejecutándose</b><br><span id="runningText">%s</span></div><div class="stat"><b>Último estado</b><br><span id="lastStatus">%s</span></div><div class="stat clickable" onclick="openResults('all')"><b>Encontrados</b><br><span id="found">%d</span></div><div class="stat clickable" onclick="openResults('updated')"><b>Actualizados</b><br><span id="updated">%d</span></div><div class="stat clickable" onclick="openResults('error')"><b>Errores</b><br><span id="errors">%d</span></div></div><p id="lastMessage" class="msg">%s</p><p><a class="btn secondary" target="_blank" rel="noopener" href="/health">JSON</a> <a class="btn secondary" target="_blank" rel="noopener" href="/history">Logs</a></p></div>
+<div class="card"><h2>Estado</h2><div class="grid"><div class="stat"><b>Ejecutándose</b><br><span id="runningText">%s</span></div><div class="stat"><b>Último estado</b><br><span id="lastStatus">%s</span></div><div class="stat clickable" onclick="openResults('all')"><b>Encontrados</b><br><span id="found">%d</span></div><div class="stat clickable" onclick="openResults('updated')"><b>Actualizados</b><br><span id="updated">%d</span></div><div class="stat clickable" onclick="openResults('error')"><b>Errores</b><br><span id="errors">%d</span></div></div><p id="lastMessage" class="msg">%s</p><p><a class="btn secondary" target="_blank" rel="noopener" href="/api/status">JSON</a> <a class="btn secondary" target="_blank" rel="noopener" href="/log">Logs</a></p></div>
 <div id="modal" class="modal" onclick="if(event.target===this)closeModal()"><div class="modal-box"><div class="modal-head"><h2 id="modalTitle">Detalles</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div><div id="modalBody"></div></div></div>
 <script>
 let lastData=null; const initial={running:%t,processed:%d,total:%d,message:%q,trigger:%q};

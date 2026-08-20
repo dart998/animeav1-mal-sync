@@ -14,4 +14,5 @@ COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certifica
 COPY --from=build /out/animeav1-mal-sync /animeav1-mal-sync
 EXPOSE 8787
 VOLUME ["/data"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD ["/animeav1-mal-sync", "healthcheck"]
 ENTRYPOINT ["/animeav1-mal-sync"]
