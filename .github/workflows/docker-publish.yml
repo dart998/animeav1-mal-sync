@@ -1,6 +1,11 @@
 name: Test and publish Docker image
 
+# RC pushes on feature/mal-to-animeav1 publish only the VERSION tag; stable main builds may also publish latest.
 on:
+  push:
+    branches:
+      - main
+      - feature/mal-to-animeav1
   workflow_dispatch:
 
 permissions:
@@ -48,10 +53,10 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Build and push ARMv7 image
+      - name: Build and push multi-architecture image
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/arm/v7
+          platforms: linux/arm/v7,linux/arm64,linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
