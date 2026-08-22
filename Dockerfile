@@ -2,11 +2,14 @@
 FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
 WORKDIR /src
 COPY go.mod ./
+COPY VERSION ./
 COPY *.go ./
 ARG TARGETOS
 ARG TARGETARCH
 ARG TARGETVARIANT
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOARM=${TARGETVARIANT#v} \
+RUN VERSION="$(tr -d '[:space:]' < VERSION)" && \
+    sed -i "s/appVersion = \"[^\"]*\"/appVersion = \"${VERSION}\"/" main.go && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOARM=${TARGETVARIANT#v} \
     go build -trimpath -ldflags="-s -w" -o /out/animeav1-mal-sync .
 
 FROM scratch
