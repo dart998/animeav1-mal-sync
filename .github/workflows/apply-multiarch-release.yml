@@ -1,16 +1,15 @@
 name: Apply multiarch release update
 
 on:
-  issues:
-    types: [opened]
+  push:
+    paths:
+      - .multiarch-trigger
 
 permissions:
   contents: write
-  issues: write
 
 jobs:
   apply:
-    if: github.event.issue.title == '[MULTIARCH] release 1.7.0'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
