@@ -1,5 +1,4 @@
 from pathlib import Path
-import re
 import sys
 
 branch = sys.argv[1] if len(sys.argv) > 1 else 'main'
@@ -19,8 +18,8 @@ s = s.replace(f'appVersion = "{old_version}"', f'appVersion = "{new_version}"', 
 # Carry the AnimeAV1 slug in run results and persistent cache so UI links never need a server-side authenticated lookup.
 if 'SourceSlug  string   `json:"source_slug,omitempty"`' not in s:
     s = s.replace('SourceTitle string   `json:"source_title"`\n', 'SourceTitle string   `json:"source_title"`\n\tSourceSlug  string   `json:"source_slug,omitempty"`\n', 1)
-if 'SourceSlug      string   `json:"source_slug,omitempty"`' not in s:
-    s = s.replace('SourceTitle     string   `json:"source_title"`\n', 'SourceTitle     string   `json:"source_title"`\n\tSourceSlug      string   `json:"source_slug,omitempty"`\n', 1)
+if 'SourceSlug     string   `json:"source_slug,omitempty"`' not in s:
+    s = s.replace('SourceTitle    string   `json:"source_title"`\n', 'SourceTitle    string   `json:"source_title"`\n\tSourceSlug     string   `json:"source_slug,omitempty"`\n', 1)
 
 # Every normal direct-sync RunItem built from AVItem now includes its slug.
 s = s.replace('RunItem{MediaID: it.MediaID, SourceTitle: it.Title,', 'RunItem{MediaID: it.MediaID, SourceTitle: it.Title, SourceSlug: it.Slug,')
@@ -46,6 +45,9 @@ if start >= 0:
     if end < 0:
         raise SystemExit('openAnimeAV1 function end not found')
     s = s[:start] + s[end+1:]
+
+if 'SourceSlug     string   `json:"source_slug,omitempty"`' not in s:
+    raise SystemExit('CacheEntry SourceSlug field was not added')
 
 p.write_text(s, encoding='utf-8')
 
