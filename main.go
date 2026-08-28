@@ -70,6 +70,7 @@ func (id *IDString) UnmarshalJSON(data []byte) error {
 type RunItem struct {
 	MediaID     IDString `json:"media_id"`
 	SourceTitle string   `json:"source_title"`
+	SourceSlug  string   `json:"source_slug,omitempty"`
 	MALID       int      `json:"mal_id,omitempty"`
 	MALTitle    string   `json:"mal_title,omitempty"`
 	MALID2      int      `json:"mal_id_2,omitempty"`
@@ -135,6 +136,7 @@ type CacheEntry struct {
 	MatchType      string   `json:"match_type,omitempty"`
 	MatchScore     int      `json:"match_score"`
 	SourceTitle    string   `json:"source_title"`
+	SourceSlug     string   `json:"source_slug,omitempty"`
 	SourceSeen     int      `json:"source_seen"`
 	SourceStatus   int      `json:"source_status"`
 	SourceTotal    int      `json:"source_total"`
@@ -259,7 +261,6 @@ func main() {
 	mux.HandleFunc("/api/cache/manual", app.manualCacheEntryAPI)
 	mux.HandleFunc("/api/cache/candidates", app.cacheCandidatesAPI)
 	mux.HandleFunc("/api/cache/recompute", app.recomputeCacheEntryAPI)
-	mux.HandleFunc("/animeav1/open", app.openAnimeAV1)
 	mux.HandleFunc("/history/clear", app.clearHistoryHandler)
 	mux.HandleFunc("/oauth/start", app.oauthStart)
 	mux.HandleFunc("/oauth/callback", app.oauthCallback)
@@ -519,9 +520,9 @@ async function pollStatus(){try{const r=await fetch('/api/status',{cache:'no-sto
 function showModal(title,html){modalTitle.textContent=title;modalBody.innerHTML=html;modal.classList.add('open')} function closeModal(){modal.classList.remove('open')}
 function manualMatchBox(i){const q=encodeURIComponent(i.source_title||'');return '<div class="manual-match"><div style="margin:8px 0 10px"><a class="btn secondary" target="_blank" rel="noopener" href="https://myanimelist.net/anime.php?q='+q+'">🔎 Buscar «'+esc(i.source_title)+'» en MyAnimeList ↗</a></div><div style="display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:end"><label>MAL ID<input class="manual-mal-1" type="number" min="1" inputmode="numeric" placeholder="Obligatorio"></label><label>MAL ID 2<input class="manual-mal-2" type="number" min="1" inputmode="numeric" placeholder="Opcional, temporada dividida"></label><button type="button" class="manual-save" data-media-id="'+esc(i.media_id)+'">Guardar</button></div><div class="manual-result muted"></div></div>'}
 function reverseManualMatchBox(i){const q=encodeURIComponent(i.mal_title||i.source_title||'');return '<div class="manual-match reverse-manual-match"><div class="warn" style="margin:8px 0">No se ha podido identificar automáticamente la ficha de AnimeAV1. El MAL ID ya es conocido: #'+esc(i.mal_id)+'.</div><div style="margin:8px 0 10px"><a class="btn secondary" target="_blank" rel="noopener" href="https://animeav1.com/catalogo" title="Abrir el catálogo de AnimeAV1">🔎 Buscar en AnimeAV1 ↗</a> <span class="muted">Busca: '+esc(i.mal_title||i.source_title||'')+'</span></div><div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end"><label>URL o slug de AnimeAV1<input class="manual-av1-ref" type="text" placeholder="https://animeav1.com/media/... o slug"></label><button type="button" class="reverse-manual-save" data-mal-id="'+esc(i.mal_id)+'" data-mal-title="'+esc(i.mal_title||i.source_title||'')+'">Guardar</button></div><div class="manual-result muted"></div></div>'}
-function animeAV1IDLink(id){return '<a class="id-link" target="_blank" rel="noopener" href="/animeav1/open?media_id='+encodeURIComponent(id)+'" title="Abrir ficha en AnimeAV1">'+esc(id)+'</a>'}
+function animeAV1IDLink(id,slug){const s=String(slug||'').trim();if(!s)return esc(id);return '<a class="id-link" target="_blank" rel="noopener noreferrer" href="https://animeav1.com/media/'+encodeURIComponent(s)+'" title="Abrir ficha en AnimeAV1">'+esc(id)+'</a>'}
 function malIDLink(id){return '<a class="id-link" target="_blank" rel="noopener" href="https://myanimelist.net/anime/'+encodeURIComponent(id)+'" title="Abrir ficha en MyAnimeList">#'+esc(id)+'</a>'}
-function resultTable(items,cacheMode=false){if(!items.length)return '<p>Sin elementos.</p>';const actionHead=cacheMode?'<th aria-label="Acciones"></th>':'';return '<div class="table-wrap"><table><thead><tr><th>AnimeAV1</th><th>MAL</th><th>Puntos</th><th>Episodios</th><th>Resultado</th><th>Detalle</th>'+actionHead+'</tr></thead><tbody>'+items.map(i=>{const action=cacheMode?'<td style="white-space:nowrap"><button type="button" class="secondary inspect-button" data-media-id="'+esc(i.media_id)+'" title="Ver candidatos">🔍</button> <button type="button" class="secondary recompute-button" data-media-id="'+esc(i.media_id)+'" title="Recalcular coincidencia">↻</button> <button type="button" class="danger trash-button" data-media-id="'+esc(i.media_id)+'" title="Eliminar esta coincidencia de la caché">🗑️</button></td>':'';const reverseUnmatched=i.result==='error'&&i.direction==='reverse'&&i.error_type==='animeav1_unmatched';const manual=i.result==='error'?(String(i.message||'').startsWith('Conflicto de episodios')?reverseConflictBox(i):(reverseUnmatched?reverseManualMatchBox(i):manualMatchBox(i))):'';return '<tr data-cache-row="'+esc(i.media_id)+'"><td>'+(i.media_id?(esc(i.source_title)+'<br>'+animeAV1IDLink(i.media_id)):'—<br><span class="muted">No identificado</span>')+'</td><td>'+esc(i.mal_title||'—')+(i.mal_id?' '+malIDLink(i.mal_id):'')+(i.mal_title_2?'<br>↳ '+esc(i.mal_title_2)+(i.mal_id_2?' '+malIDLink(i.mal_id_2):''):'')+'</td><td>'+esc(i.match_score||'—')+'</td><td>'+esc(i.from)+' → '+esc(i.to)+'</td><td>'+esc(i.result)+'</td><td>'+esc(i.message||'')+manual+'</td>'+action+'</tr>'}).join('')+'</tbody></table></div>'}
+function resultTable(items,cacheMode=false){if(!items.length)return '<p>Sin elementos.</p>';const actionHead=cacheMode?'<th aria-label="Acciones"></th>':'';return '<div class="table-wrap"><table><thead><tr><th>AnimeAV1</th><th>MAL</th><th>Puntos</th><th>Episodios</th><th>Resultado</th><th>Detalle</th>'+actionHead+'</tr></thead><tbody>'+items.map(i=>{const action=cacheMode?'<td style="white-space:nowrap"><button type="button" class="secondary inspect-button" data-media-id="'+esc(i.media_id)+'" title="Ver candidatos">🔍</button> <button type="button" class="secondary recompute-button" data-media-id="'+esc(i.media_id)+'" title="Recalcular coincidencia">↻</button> <button type="button" class="danger trash-button" data-media-id="'+esc(i.media_id)+'" title="Eliminar esta coincidencia de la caché">🗑️</button></td>':'';const reverseUnmatched=i.result==='error'&&i.direction==='reverse'&&i.error_type==='animeav1_unmatched';const manual=i.result==='error'?(String(i.message||'').startsWith('Conflicto de episodios')?reverseConflictBox(i):(reverseUnmatched?reverseManualMatchBox(i):manualMatchBox(i))):'';return '<tr data-cache-row="'+esc(i.media_id)+'"><td>'+(i.media_id?(esc(i.source_title)+'<br>'+animeAV1IDLink(i.media_id,i.source_slug)):'—<br><span class="muted">No identificado</span>')+'</td><td>'+esc(i.mal_title||'—')+(i.mal_id?' '+malIDLink(i.mal_id):'')+(i.mal_title_2?'<br>↳ '+esc(i.mal_title_2)+(i.mal_id_2?' '+malIDLink(i.mal_id_2):''):'')+'</td><td>'+esc(i.match_score||'—')+'</td><td>'+esc(i.from)+' → '+esc(i.to)+'</td><td>'+esc(i.result)+'</td><td>'+esc(i.message||'')+manual+'</td>'+action+'</tr>'}).join('')+'</tbody></table></div>'}
 function bindReverseManualMatches(){document.querySelectorAll('.reverse-manual-save').forEach(b=>b.addEventListener('click',async()=>{const box=b.closest('.reverse-manual-match'),row=b.closest('tr'),ref=box.querySelector('.manual-av1-ref').value.trim(),out=box.querySelector('.manual-result');if(!ref){out.textContent='Introduce la URL o el slug de AnimeAV1.';return}b.disabled=true;out.textContent='Resolviendo ficha y guardando…';try{const body=new URLSearchParams({animeav1_ref:ref,mal_id:b.dataset.malId,mal_title:b.dataset.malTitle});const r=await fetch('/api/reverse/manual-match',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});const x=await r.json().catch(()=>({}));if(!r.ok||!x.ok)throw new Error(x.error||'No se pudo guardar');out.textContent='✓ Relación guardada con '+(x.entry?.source_title||'AnimeAV1')+' (ID '+(x.entry?.media_id||'')+').';if(lastData?.last?.items)lastData.last.items=lastData.last.items.filter(i=>!(i.result==='error'&&String(i.mal_id)===String(b.dataset.malId)&&!i.media_id));setTimeout(()=>row?.remove(),350);await pollStatus()}catch(e){out.textContent=e.message||'No se pudo guardar';b.disabled=false}}))}
 function bindManualMatches(){document.querySelectorAll('.manual-save').forEach(b=>b.addEventListener('click',async()=>{const box=b.closest('.manual-match'),row=b.closest('tr'),one=box.querySelector('.manual-mal-1').value.trim(),two=box.querySelector('.manual-mal-2').value.trim(),out=box.querySelector('.manual-result');if(!one){out.textContent='Introduce al menos el primer ID de MAL.';return}b.disabled=true;out.textContent='Validando y guardando…';try{const body=new URLSearchParams({media_id:b.dataset.mediaId,mal_id:one});if(two)body.set('mal_id_2',two);const r=await fetch('/api/cache/manual',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});const x=await r.json().catch(()=>({}));if(!r.ok)throw new Error(x.error||'No se pudo guardar');out.textContent=two?'✓ Guardado como temporada dividida.':'✓ Coincidencia guardada.';if(lastData?.last?.items)lastData.last.items=lastData.last.items.filter(i=>!(String(i.media_id)===String(b.dataset.mediaId)&&i.result==='error'));if(lastData?.last){lastData.last.errors=x.errors??Math.max(0,(lastData.last.errors||0)-1);lastData.last.status=x.status||lastData.last.status;lastData.last.message=x.message||lastData.last.message}errors.textContent=x.errors??0;lastStatus.textContent=x.status||lastStatus.textContent;lastMessage.textContent=x.message||lastMessage.textContent;setTimeout(()=>{row?.remove();const tbody=document.querySelector('#modalBody tbody');if(tbody&&!tbody.children.length)modalBody.innerHTML='<p class="ok">✓ No hay errores de matching pendientes.</p>'},350);await pollStatus()}catch(e){out.textContent=e.message||'No se pudo guardar';b.disabled=false}}))}
 function reverseConflictBox(i){return '<div class="manual-match"><div class="warn" style="margin:8px 0">El progreso no se compara automáticamente porque AnimeAV1 puede contar especiales de forma diferente.</div><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="secondary reverse-resolve" data-source="animeav1" data-media-id="'+esc(i.media_id)+'" data-mal-id="'+esc(i.mal_id)+'" data-av-title="'+esc(i.source_title)+'" data-mal-title="'+esc(i.mal_title||'')+'" data-av-seen="'+esc(i.from)+'" data-mal-seen="'+esc(i.to)+'">Usar AnimeAV1 ('+esc(i.from)+')</button><button type="button" class="reverse-resolve" data-source="mal" data-media-id="'+esc(i.media_id)+'" data-mal-id="'+esc(i.mal_id)+'" data-av-title="'+esc(i.source_title)+'" data-mal-title="'+esc(i.mal_title||'')+'" data-av-seen="'+esc(i.from)+'" data-mal-seen="'+esc(i.to)+'">Usar MAL ('+esc(i.to)+')</button></div><div class="manual-result muted"></div></div>'}
@@ -1846,7 +1847,7 @@ func (a *App) runSync(trigger string) {
 		if cached && cache.MALID == 0 && cache.NegativeUntil > now.Unix() && cache.SourceTitle == normalize(it.Title) {
 			last.Errors++
 			last.Unmatched = append(last.Unmatched, it.Title+": "+cache.NegativeReason+" (caché negativa)")
-			last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, Status: status, Result: "error", Message: cache.NegativeReason + " (caché negativa)"})
+			last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, SourceSlug: it.Slug, Status: status, Result: "error", Message: cache.NegativeReason + " (caché negativa)"})
 			a.mu.Lock()
 			a.progressProcessed = idx + 1
 			a.progressMessage = "Omitido por caché negativa: " + it.Title
@@ -1872,7 +1873,7 @@ func (a *App) runSync(trigger string) {
 		// Ruta rápida: la fuente no cambió, MAL fue validado recientemente y el estado cacheado ya es correcto.
 		if unchanged && fresh && cache.MALID2 == 0 && (cacheAlreadyCorrect || cacheProtected) {
 			last.Skipped++
-			last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, MALID: cache.MALID, MALTitle: cache.MALTitle, MatchScore: cache.MatchScore, From: cache.MALSeen, To: desiredCached, Status: status, Result: "skipped", Message: "Sin cambios (caché)"})
+			last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, SourceSlug: it.Slug, MALID: cache.MALID, MALTitle: cache.MALTitle, MatchScore: cache.MatchScore, From: cache.MALSeen, To: desiredCached, Status: status, Result: "skipped", Message: "Sin cambios (caché)"})
 			a.mu.Lock()
 			a.progressProcessed = idx + 1
 			a.progressMessage = "Sin cambios (caché): " + it.Title
@@ -1909,9 +1910,9 @@ func (a *App) runSync(trigger string) {
 				}
 				last.Errors++
 				negativeHours := getenvInt("NEGATIVE_CACHE_HOURS", 24)
-				a.cachePut(CacheEntry{MediaID: it.MediaID, SourceTitle: normalize(it.Title), SourceSeen: it.Seen, SourceStatus: it.Status, SourceTotal: it.Total, NegativeUntil: time.Now().Add(time.Duration(negativeHours) * time.Hour).Unix(), NegativeReason: err.Error(), MatcherVersion: appVersion, UpdatedAt: time.Now().Unix()})
+				a.cachePut(CacheEntry{MediaID: it.MediaID, SourceTitle: normalize(it.Title), SourceSlug: it.Slug, SourceSeen: it.Seen, SourceStatus: it.Status, SourceTotal: it.Total, NegativeUntil: time.Now().Add(time.Duration(negativeHours) * time.Hour).Unix(), NegativeReason: err.Error(), MatcherVersion: appVersion, UpdatedAt: time.Now().Unix()})
 				last.Unmatched = append(last.Unmatched, it.Title+": "+err.Error())
-				last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, Status: status, Result: "error", Message: err.Error()})
+				last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, SourceSlug: it.Slug, Status: status, Result: "error", Message: err.Error()})
 				continue
 			}
 		} else if !needValidate {
@@ -1965,7 +1966,7 @@ func (a *App) runSync(trigger string) {
 				}
 				last.Errors++
 				last.Unmatched = append(last.Unmatched, it.Title+": "+e1.Error())
-				last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, MALID: anime.ID, MALTitle: anime.Title, MALID2: anime2.ID, MALTitle2: anime2.Title, MatchScore: matchScore, From: old1 + old2, To: desired1 + desired2, Status: status, Result: "error", Message: e1.Error()})
+				last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, SourceSlug: it.Slug, MALID: anime.ID, MALTitle: anime.Title, MALID2: anime2.ID, MALTitle2: anime2.Title, MatchScore: matchScore, From: old1 + old2, To: desired1 + desired2, Status: status, Result: "error", Message: e1.Error()})
 				continue
 			}
 			new2, newStatus2, changed2, e2 := a.updateMALItem(ctx, anime2, desired2, status2, dry, only)
@@ -1976,10 +1977,10 @@ func (a *App) runSync(trigger string) {
 				}
 				last.Errors++
 				last.Unmatched = append(last.Unmatched, it.Title+": "+e2.Error())
-				last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, MALID: anime.ID, MALTitle: anime.Title, MALID2: anime2.ID, MALTitle2: anime2.Title, MatchScore: matchScore, From: old1 + old2, To: desired1 + desired2, Status: status, Result: "error", Message: "Parte 2: " + e2.Error()})
+				last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, SourceSlug: it.Slug, MALID: anime.ID, MALTitle: anime.Title, MALID2: anime2.ID, MALTitle2: anime2.Title, MatchScore: matchScore, From: old1 + old2, To: desired1 + desired2, Status: status, Result: "error", Message: "Parte 2: " + e2.Error()})
 				continue
 			}
-			entry := CacheEntry{MediaID: it.MediaID, MALID: anime.ID, MALTitle: anime.Title, MALID2: anime2.ID, MALTitle2: anime2.Title, MAL2Episodes: anime2.NumEpisodes, MAL2Seen: new2, MAL2Status: newStatus2, MatchType: "split_season", MatchScore: matchScore, SourceTitle: normalize(it.Title), SourceSeen: it.Seen, SourceStatus: it.Status, SourceTotal: it.Total, MALSeen: new1, MALStatus: newStatus1, LastValidated: time.Now().Unix(), UpdatedAt: time.Now().Unix(), MatcherVersion: appVersion, SearchStrategy: "title+split_part_2"}
+			entry := CacheEntry{MediaID: it.MediaID, MALID: anime.ID, MALTitle: anime.Title, MALID2: anime2.ID, MALTitle2: anime2.Title, MAL2Episodes: anime2.NumEpisodes, MAL2Seen: new2, MAL2Status: newStatus2, MatchType: "split_season", MatchScore: matchScore, SourceTitle: normalize(it.Title), SourceSlug: it.Slug, SourceSeen: it.Seen, SourceStatus: it.Status, SourceTotal: it.Total, MALSeen: new1, MALStatus: newStatus1, LastValidated: time.Now().Unix(), UpdatedAt: time.Now().Unix(), MatcherVersion: appVersion, SearchStrategy: "title+split_part_2"}
 			a.cachePut(entry)
 			msg := fmt.Sprintf("Temporada partida: %s %d/%d + %s %d/%d", anime.Title, desired1, anime.NumEpisodes, anime2.Title, desired2, anime2.NumEpisodes)
 			if changed1 || changed2 {
@@ -1987,11 +1988,11 @@ func (a *App) runSync(trigger string) {
 				if dry {
 					msg = "Simulado · " + msg
 				}
-				last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, MALID: anime.ID, MALTitle: anime.Title, MALID2: anime2.ID, MALTitle2: anime2.Title, MatchScore: matchScore, From: old1 + old2, To: desired1 + desired2, Status: status, Result: "updated", Message: msg})
+				last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, SourceSlug: it.Slug, MALID: anime.ID, MALTitle: anime.Title, MALID2: anime2.ID, MALTitle2: anime2.Title, MatchScore: matchScore, From: old1 + old2, To: desired1 + desired2, Status: status, Result: "updated", Message: msg})
 				a.appendHistory(map[string]any{"ts": time.Now().Unix(), "title": it.Title, "animeav1_media_id": it.MediaID, "match_type": "split_season", "mal_id": anime.ID, "mal_title": anime.Title, "mal_id_2": anime2.ID, "mal_title_2": anime2.Title, "from_1": old1, "to_1": desired1, "from_2": old2, "to_2": desired2, "dry_run": dry})
 			} else {
 				last.Skipped++
-				last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, MALID: anime.ID, MALTitle: anime.Title, MALID2: anime2.ID, MALTitle2: anime2.Title, MatchScore: matchScore, From: old1 + old2, To: desired1 + desired2, Status: status, Result: "skipped", Message: msg + " · ya estaba sincronizado"})
+				last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, SourceSlug: it.Slug, MALID: anime.ID, MALTitle: anime.Title, MALID2: anime2.ID, MALTitle2: anime2.Title, MatchScore: matchScore, From: old1 + old2, To: desired1 + desired2, Status: status, Result: "skipped", Message: msg + " · ya estaba sincronizado"})
 			}
 			a.mu.Lock()
 			a.progressProcessed = idx + 1
@@ -2003,14 +2004,14 @@ func (a *App) runSync(trigger string) {
 		desired := desiredFor(it, anime.NumEpisodes)
 		entry := CacheEntry{
 			MediaID: it.MediaID, MALID: anime.ID, MALTitle: anime.Title, MatchScore: matchScore,
-			SourceTitle: normalize(it.Title), SourceSeen: it.Seen, SourceStatus: it.Status, SourceTotal: it.Total,
+			SourceTitle: normalize(it.Title), SourceSlug: it.Slug, SourceSeen: it.Seen, SourceStatus: it.Status, SourceTotal: it.Total,
 			MALSeen: current, MALStatus: currentStatus, LastValidated: time.Now().Unix(), UpdatedAt: time.Now().Unix(),
 			MatcherVersion: appVersion, SearchStrategy: "multi_query",
 		}
 
 		if only && desired < current {
 			last.Skipped++
-			last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, MALID: anime.ID, MALTitle: anime.Title, MatchScore: matchScore, From: current, To: desired, Status: status, Result: "skipped", Message: "Protegido por solo aumentar episodios"})
+			last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, SourceSlug: it.Slug, MALID: anime.ID, MALTitle: anime.Title, MatchScore: matchScore, From: current, To: desired, Status: status, Result: "skipped", Message: "Protegido por solo aumentar episodios"})
 			a.cachePut(entry)
 			a.mu.Lock()
 			a.progressProcessed = idx + 1
@@ -2019,7 +2020,7 @@ func (a *App) runSync(trigger string) {
 		}
 		if desired == current && currentStatus == status {
 			last.Skipped++
-			last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, MALID: anime.ID, MALTitle: anime.Title, MatchScore: matchScore, From: current, To: desired, Status: status, Result: "skipped", Message: "Ya estaba sincronizado"})
+			last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, SourceSlug: it.Slug, MALID: anime.ID, MALTitle: anime.Title, MatchScore: matchScore, From: current, To: desired, Status: status, Result: "skipped", Message: "Ya estaba sincronizado"})
 			a.cachePut(entry)
 			a.mu.Lock()
 			a.progressProcessed = idx + 1
@@ -2035,9 +2036,9 @@ func (a *App) runSync(trigger string) {
 				}
 				last.Errors++
 				negativeHours := getenvInt("NEGATIVE_CACHE_HOURS", 24)
-				a.cachePut(CacheEntry{MediaID: it.MediaID, SourceTitle: normalize(it.Title), SourceSeen: it.Seen, SourceStatus: it.Status, SourceTotal: it.Total, NegativeUntil: time.Now().Add(time.Duration(negativeHours) * time.Hour).Unix(), NegativeReason: err.Error(), MatcherVersion: appVersion, UpdatedAt: time.Now().Unix()})
+				a.cachePut(CacheEntry{MediaID: it.MediaID, SourceTitle: normalize(it.Title), SourceSlug: it.Slug, SourceSeen: it.Seen, SourceStatus: it.Status, SourceTotal: it.Total, NegativeUntil: time.Now().Add(time.Duration(negativeHours) * time.Hour).Unix(), NegativeReason: err.Error(), MatcherVersion: appVersion, UpdatedAt: time.Now().Unix()})
 				last.Unmatched = append(last.Unmatched, it.Title+": "+err.Error())
-				last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, MALID: anime.ID, MALTitle: anime.Title, MatchScore: matchScore, From: current, To: desired, Status: status, Result: "error", Message: err.Error()})
+				last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, SourceSlug: it.Slug, MALID: anime.ID, MALTitle: anime.Title, MatchScore: matchScore, From: current, To: desired, Status: status, Result: "error", Message: err.Error()})
 				continue
 			}
 			entry.MALSeen = desired
@@ -2047,7 +2048,7 @@ func (a *App) runSync(trigger string) {
 		}
 		a.cachePut(entry)
 		last.Updated++
-		last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, MALID: anime.ID, MALTitle: anime.Title, MatchScore: matchScore, From: current, To: desired, Status: status, Result: "updated", Message: map[bool]string{true: "Simulado", false: "Actualizado"}[dry]})
+		last.Items = append(last.Items, RunItem{MediaID: it.MediaID, SourceTitle: it.Title, SourceSlug: it.Slug, MALID: anime.ID, MALTitle: anime.Title, MatchScore: matchScore, From: current, To: desired, Status: status, Result: "updated", Message: map[bool]string{true: "Simulado", false: "Actualizado"}[dry]})
 		a.appendHistory(map[string]any{"ts": time.Now().Unix(), "title": it.Title, "animeav1_media_id": it.MediaID, "mal_id": anime.ID, "mal_title": anime.Title, "match_score": matchScore, "from": current, "to": desired, "status": status, "dry_run": dry})
 		a.mu.Lock()
 		a.progressProcessed = idx + 1
@@ -2158,38 +2159,6 @@ func (a *App) cacheAPI(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(items, func(i, j int) bool { return items[i].MediaID < items[j].MediaID })
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	json.NewEncoder(w).Encode(map[string]any{"items": items, "count": len(items)})
-}
-
-func (a *App) openAnimeAV1(w http.ResponseWriter, r *http.Request) {
-	mediaID := IDString(strings.TrimSpace(r.URL.Query().Get("media_id")))
-	if mediaID == "" {
-		http.Error(w, "media_id no válido", http.StatusBadRequest)
-		return
-	}
-	a.mu.Lock()
-	cookie := a.state.Settings.Cookie
-	a.mu.Unlock()
-	if cookie == "" {
-		http.Error(w, "Configura primero la cookie de AnimeAV1", http.StatusUnauthorized)
-		return
-	}
-	items, err := a.scrapeContext(r.Context(), cookie)
-	if err != nil {
-		http.Error(w, "No se pudo consultar AnimeAV1: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	for _, item := range items {
-		if item.MediaID == mediaID {
-			if strings.TrimSpace(item.Slug) == "" {
-				http.Error(w, "AnimeAV1 no devolvió la URL de esta ficha", http.StatusNotFound)
-				return
-			}
-			target := "https://animeav1.com/media/" + url.PathEscape(strings.TrimSpace(item.Slug))
-			http.Redirect(w, r, target, http.StatusFound)
-			return
-		}
-	}
-	http.Error(w, "El ID no se encontró en la biblioteca actual de AnimeAV1", http.StatusNotFound)
 }
 
 func (a *App) deleteCacheEntryAPI(w http.ResponseWriter, r *http.Request) {
@@ -2344,7 +2313,7 @@ func (a *App) manualCacheEntryAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	seen, status := animeState(anime)
-	entry := CacheEntry{MediaID: mediaID, MALID: anime.ID, MALTitle: anime.Title, MatchType: "manual", MatchScore: 999, SourceTitle: normalize(source.Title), SourceSeen: source.Seen, SourceStatus: source.Status, SourceTotal: source.Total, MALSeen: seen, MALStatus: status, LastValidated: time.Now().Unix(), UpdatedAt: time.Now().Unix(), MatcherVersion: appVersion, SearchStrategy: "manual_mal_id"}
+	entry := CacheEntry{MediaID: mediaID, MALID: anime.ID, MALTitle: anime.Title, MatchType: "manual", MatchScore: 999, SourceTitle: normalize(source.Title), SourceSlug: source.Slug, SourceSeen: source.Seen, SourceStatus: source.Status, SourceTotal: source.Total, MALSeen: seen, MALStatus: status, LastValidated: time.Now().Unix(), UpdatedAt: time.Now().Unix(), MatcherVersion: appVersion, SearchStrategy: "manual_mal_id"}
 	if malID2 > 0 {
 		var anime2 MALAnime
 		if err := a.malRequestContext(r.Context(), http.MethodGet, fmt.Sprintf("/anime/%d?fields=%s", malID2, fields), nil, &anime2); err != nil {
