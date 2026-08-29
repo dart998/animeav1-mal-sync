@@ -10,7 +10,7 @@ ARG TARGETVARIANT
 RUN VERSION="$(tr -d '[:space:]' < VERSION)" && \
     sed -i "s/appVersion = \"[^\"]*\"/appVersion = \"${VERSION}\"/" main.go && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOARM=${TARGETVARIANT#v} \
-    go build -trimpath -ldflags="-s -w" -o /out/animeav1-mal-sync ./main.go
+    go build -trimpath -ldflags="-s -w" -o /out/animeav1-mal-sync .
 
 FROM scratch
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
