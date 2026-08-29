@@ -1,5 +1,4 @@
 from pathlib import Path
-import re
 
 p = Path('main.go')
 s = p.read_text(encoding='utf-8')
@@ -33,7 +32,6 @@ s = s.replace('\tapp.load()\n\tapp.loadCache()\n', '\tapp.load()\n\tapp.importMA
 s = s.replace('\tmux.HandleFunc("/settings", app.saveSettings)\n', '\tmux.HandleFunc("/settings", app.saveSettings)\n\tmux.HandleFunc("/mal/settings", app.saveMALSettings)\n', 1)
 
 # Build MAL configuration card from persisted settings.
-s = s.replace('\tmalStatus := "❌ No autorizado"\n', '\tmalStatus := "❌ No autorizado"\n', 1)
 needle = '''\tif st.Token.AccessToken != "" {
 \t\tmalStatus = "✅ Autorizado"
 \t\tif st.MALUsername != "" {
@@ -49,8 +47,6 @@ old_card = '<div class="card"><h2>MyAnimeList</h2><p>%s</p><a class="btn" href="
 if old_card not in s:
     raise SystemExit('MAL dashboard card anchor not found')
 s = s.replace(old_card, '%s', 1)
-
-# The old %s consumed malStatus; now it consumes malConfigPanel.
 s = s.replace('html.EscapeString(st.Settings.Cookie), malStatus, st.Settings.IntervalMinutes', 'html.EscapeString(st.Settings.Cookie), malConfigPanel, st.Settings.IntervalMinutes', 1)
 
 # OAuth must read saved config (with environment fallback during migration), never require compose credentials.
@@ -129,15 +125,9 @@ func (a *App) malCredentials() (string, string, string) {
     sec := strings.TrimSpace(a.state.Settings.MALClientSecret)
     red := strings.TrimSpace(a.state.Settings.MALRedirectURI)
     a.mu.Unlock()
-    if cid == "" {
-        cid = strings.TrimSpace(os.Getenv("MAL_CLIENT_ID"))
-    }
-    if sec == "" {
-        sec = strings.TrimSpace(os.Getenv("MAL_CLIENT_SECRET"))
-    }
-    if red == "" {
-        red = strings.TrimSpace(os.Getenv("MAL_REDIRECT_URI"))
-    }
+    if cid == "" { cid = strings.TrimSpace(os.Getenv("MAL_CLIENT_ID")) }
+    if sec == "" { sec = strings.TrimSpace(os.Getenv("MAL_CLIENT_SECRET")) }
+    if red == "" { red = strings.TrimSpace(os.Getenv("MAL_REDIRECT_URI")) }
     return cid, sec, red
 }
 
@@ -147,27 +137,16 @@ func (a *App) importMALConfigFromEnv() {
     a.mu.Lock()
     changed := false
     if strings.TrimSpace(a.state.Settings.MALClientID) == "" {
-        if v := strings.TrimSpace(os.Getenv("MAL_CLIENT_ID")); v != "" {
-            a.state.Settings.MALClientID = v
-            changed = true
-        }
+        if v := strings.TrimSpace(os.Getenv("MAL_CLIENT_ID")); v != "" { a.state.Settings.MALClientID = v; changed = true }
     }
     if strings.TrimSpace(a.state.Settings.MALClientSecret) == "" {
-        if v := strings.TrimSpace(os.Getenv("MAL_CLIENT_SECRET")); v != "" {
-            a.state.Settings.MALClientSecret = v
-            changed = true
-        }
+        if v := strings.TrimSpace(os.Getenv("MAL_CLIENT_SECRET")); v != "" { a.state.Settings.MALClientSecret = v; changed = true }
     }
     if strings.TrimSpace(a.state.Settings.MALRedirectURI) == "" {
-        if v := strings.TrimSpace(os.Getenv("MAL_REDIRECT_URI")); v != "" {
-            a.state.Settings.MALRedirectURI = v
-            changed = true
-        }
+        if v := strings.TrimSpace(os.Getenv("MAL_REDIRECT_URI")); v != "" { a.state.Settings.MALRedirectURI = v; changed = true }
     }
     a.mu.Unlock()
-    if changed {
-        a.save()
-    }
+    if changed { a.save() }
 }
 
 func (a *App) malConfigPanel(r *http.Request, st State, status string) string {
@@ -176,24 +155,17 @@ func (a *App) malConfigPanel(r *http.Request, st State, status string) string {
     configured := cid != "" && red != ""
     if red == "" {
         scheme := "http"
-        if r.TLS != nil {
-            scheme = "https"
-        }
+        if r.TLS != nil { scheme = "https" }
         red = scheme + "://" + r.Host + "/oauth/callback"
     }
-
     action := ""
     if configured {
         action = `<a class="btn" href="/oauth/start">Conectar con MAL</a> <a class="btn danger" href="/oauth/disconnect">Desconectar</a>`
     } else {
         status = "⚠️ Configura primero la aplicación de MyAnimeList"
     }
-
     secretHint := "Opcional"
-    if st.Settings.MALClientSecret != "" {
-        secretHint = "Guardado; déjalo vacío para conservarlo"
-    }
-
+    if st.Settings.MALClientSecret != "" { secretHint = "Guardado; déjalo vacío para conservarlo" }
     return fmt.Sprintf(`<div class="card"><h2>MyAnimeList</h2><p>%s</p>
 <form method="post" action="/mal/settings">
 <label>Client ID</label><input name="mal_client_id" value="%s" autocomplete="off" required>
@@ -205,31 +177,16 @@ func (a *App) malConfigPanel(r *http.Request, st State, status string) string {
 }
 
 func (a *App) saveMALSettings(w http.ResponseWriter, r *http.Request) {
-    if r.Method != http.MethodPost {
-        http.Error(w, "POST", http.StatusMethodNotAllowed)
-        return
-    }
-    if err := r.ParseForm(); err != nil {
-        http.Error(w, err.Error(), http.StatusBadRequest)
-        return
-    }
+    if r.Method != http.MethodPost { http.Error(w, "POST", http.StatusMethodNotAllowed); return }
+    if err := r.ParseForm(); err != nil { http.Error(w, err.Error(), http.StatusBadRequest); return }
     cid := strings.TrimSpace(r.FormValue("mal_client_id"))
     sec := strings.TrimSpace(r.FormValue("mal_client_secret"))
     red := strings.TrimSpace(r.FormValue("mal_redirect_uri"))
-    if cid == "" || red == "" {
-        http.Error(w, "Client ID y Redirect URI son obligatorios", http.StatusBadRequest)
-        return
-    }
-    if !strings.HasPrefix(red, "http://") && !strings.HasPrefix(red, "https://") {
-        http.Error(w, "Redirect URI debe empezar por http:// o https://", http.StatusBadRequest)
-        return
-    }
-
+    if cid == "" || red == "" { http.Error(w, "Client ID y Redirect URI son obligatorios", http.StatusBadRequest); return }
+    if !strings.HasPrefix(red, "http://") && !strings.HasPrefix(red, "https://") { http.Error(w, "Redirect URI debe empezar por http:// o https://", http.StatusBadRequest); return }
     a.mu.Lock()
     a.state.Settings.MALClientID = cid
-    if sec != "" {
-        a.state.Settings.MALClientSecret = sec
-    }
+    if sec != "" { a.state.Settings.MALClientSecret = sec }
     a.state.Settings.MALRedirectURI = red
     a.save()
     a.mu.Unlock()
@@ -240,3 +197,9 @@ func (a *App) saveMALSettings(w http.ResponseWriter, r *http.Request) {
 Path('VERSION').write_text('1.7.2\n', encoding='utf-8')
 
 Path('docker-compose.portainer.yml').write_text('''version: "3.8"\n\nservices:\n  animeav1-mal-sync:\n    image: ovelayos/animeav1-mal-sync:1.7.2\n    container_name: animeav1-mal-sync\n    restart: unless-stopped\n\n    ports:\n      - "8787:8787"\n\n    environment:\n      SYNC_INTERVAL_MINUTES: "60"\n      DRY_RUN: "true"\n      ONLY_INCREASE: "true"\n      AUTO_SYNC: "false"\n\n      TITLE_MATCH_THRESHOLD: "80"\n      REVERSE_TITLE_MATCH_THRESHOLD: "92"\n\n      DATA_DIR: "/data"\n      LISTEN_ADDR: ":8787"\n      LOG_TIMEZONE: "Europe/Madrid"\n      CACHE_REVALIDATE_HOURS: "24"\n\n    volumes:\n      - animeav1-mal-sync-data:/data\n\n    security_opt:\n      - seccomp=unconfined\n\nvolumes:\n  animeav1-mal-sync-data:\n    name: animeav1-mal-sync-data\n''', encoding='utf-8')
+
+# Runtime image must include the new Go source file.
+d = Path('Dockerfile')
+ds = d.read_text(encoding='utf-8')
+ds = ds.replace('COPY main.go ./', 'COPY *.go ./')
+d.write_text(ds, encoding='utf-8')
