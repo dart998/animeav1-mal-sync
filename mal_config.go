@@ -57,6 +57,7 @@ func (a *App) malConfigPanel(r *http.Request, st State, status string) string {
 	cid := strings.TrimSpace(st.Settings.MALClientID)
 	red := strings.TrimSpace(st.Settings.MALRedirectURI)
 	configured := cid != "" && red != ""
+	authorized := configured && st.Token.AccessToken != "" && st.MALUsername != ""
 	if red == "" {
 		scheme := "http"
 		if r.TLS != nil {
@@ -64,24 +65,33 @@ func (a *App) malConfigPanel(r *http.Request, st State, status string) string {
 		}
 		red = scheme + "://" + r.Host + "/oauth/callback"
 	}
-	action := ""
-	if configured {
-		action = `<a class="btn" href="/oauth/start">Conectar con MAL</a> <a class="btn danger" href="/oauth/disconnect">Desconectar</a>`
-	} else {
-		status = "⚠️ Configura primero la aplicación de MyAnimeList"
-	}
+
 	secretHint := "Opcional"
 	if st.Settings.MALClientSecret != "" {
 		secretHint = "Guardado; déjalo vacío para conservarlo"
 	}
-	return fmt.Sprintf(`<div class="card"><h2>MyAnimeList</h2><p>%s</p>
-<form method="post" action="/mal/settings">
+	form := fmt.Sprintf(`<form method="post" action="/mal/settings">
 <label>Client ID</label><input name="mal_client_id" value="%s" autocomplete="off" required>
 <label>Client Secret</label><input type="password" name="mal_client_secret" value="" autocomplete="new-password" placeholder="%s">
 <label>Redirect URI</label><input name="mal_redirect_uri" value="%s" autocomplete="off" required>
-<button>Guardar configuración MAL</button> %s
-</form><p class="muted">Estos datos se guardan en /data/config/config.json y no necesitan estar en el YAML de Portainer.</p></div>`,
-		html.EscapeString(status), html.EscapeString(cid), html.EscapeString(secretHint), html.EscapeString(red), action)
+<button>Guardar configuración MAL</button></form>`, html.EscapeString(cid), html.EscapeString(secretHint), html.EscapeString(red))
+
+	if authorized {
+		return fmt.Sprintf(`<div class="card"><h2>MyAnimeList</h2><p>%s</p>
+<a class="btn danger" href="/oauth/disconnect">Desconectar</a>
+<details style="margin-top:14px"><summary class="muted" style="cursor:pointer">Cambiar configuración MAL</summary><div style="margin-top:12px">%s</div></details>
+<p class="muted">La configuración está guardada en /data/config/config.json.</p></div>`, html.EscapeString(status), form)
+	}
+
+	if !configured {
+		status = "⚠️ Configura primero la aplicación de MyAnimeList"
+		return fmt.Sprintf(`<div class="card"><h2>MyAnimeList</h2><p>%s</p>%s
+<p class="muted">Estos datos se guardan en /data/config/config.json y no necesitan estar en el YAML de Portainer.</p></div>`, html.EscapeString(status), form)
+	}
+
+	return fmt.Sprintf(`<div class="card"><h2>MyAnimeList</h2><p>%s</p>%s
+<a class="btn" href="/oauth/start">Conectar con MAL</a> <a class="btn danger" href="/oauth/disconnect">Desconectar</a>
+<p class="muted">Estos datos se guardan en /data/config/config.json y no necesitan estar en el YAML de Portainer.</p></div>`, html.EscapeString(status), form)
 }
 
 func (a *App) saveMALSettings(w http.ResponseWriter, r *http.Request) {
@@ -105,11 +115,16 @@ func (a *App) saveMALSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.mu.Lock()
+	changed := cid != a.state.Settings.MALClientID || red != a.state.Settings.MALRedirectURI || (sec != "" && sec != a.state.Settings.MALClientSecret)
 	a.state.Settings.MALClientID = cid
 	if sec != "" {
 		a.state.Settings.MALClientSecret = sec
 	}
 	a.state.Settings.MALRedirectURI = red
+	if changed {
+		a.state.Token = Token{}
+		a.state.MALUsername = ""
+	}
 	a.save()
 	a.mu.Unlock()
 	redirectHome(w, r)
