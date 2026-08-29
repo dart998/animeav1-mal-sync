@@ -2,7 +2,7 @@ version: "3.8"
 
 services:
   animeav1-mal-sync:
-    image: ovelayos/animeav1-mal-sync:1.7.3
+    image: ovelayos/animeav1-mal-sync:latest
     container_name: animeav1-mal-sync
     restart: unless-stopped
 
