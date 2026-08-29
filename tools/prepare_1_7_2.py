@@ -2,8 +2,8 @@ from pathlib import Path
 
 p = Path('main.go')
 s = p.read_text(encoding='utf-8')
+s = s.replace('appVersion = "1.6.1"', 'appVersion = "1.7.2"', 1)
 
-# Settings persist MAL application credentials in /data/config/config.json.
 anchor = '''type Settings struct {
 \tCookie          string `json:"cookie"`
 \tIntervalMinutes int    `json:"interval_minutes"`
@@ -24,14 +24,8 @@ replacement = '''type Settings struct {
 if anchor not in s:
     raise SystemExit('Settings anchor not found')
 s = s.replace(anchor, replacement, 1)
-
-# Import legacy environment credentials once, then use config.json afterwards.
 s = s.replace('\tapp.load()\n\tapp.loadCache()\n', '\tapp.load()\n\tapp.importMALConfigFromEnv()\n\tapp.loadCache()\n', 1)
-
-# Add UI endpoint.
 s = s.replace('\tmux.HandleFunc("/settings", app.saveSettings)\n', '\tmux.HandleFunc("/settings", app.saveSettings)\n\tmux.HandleFunc("/mal/settings", app.saveMALSettings)\n', 1)
-
-# Build MAL configuration card from persisted settings.
 needle = '''\tif st.Token.AccessToken != "" {
 \t\tmalStatus = "✅ Autorizado"
 \t\tif st.MALUsername != "" {
@@ -42,14 +36,11 @@ needle = '''\tif st.Token.AccessToken != "" {
 if needle not in s:
     raise SystemExit('MAL status anchor not found')
 s = s.replace(needle, needle + '\tmalConfigPanel := a.malConfigPanel(r, st, malStatus)\n', 1)
-
 old_card = '<div class="card"><h2>MyAnimeList</h2><p>%s</p><a class="btn" href="/oauth/start">Conectar con MAL</a> <a class="btn danger" href="/oauth/disconnect">Desconectar</a></div>'
 if old_card not in s:
     raise SystemExit('MAL dashboard card anchor not found')
 s = s.replace(old_card, '%s', 1)
 s = s.replace('html.EscapeString(st.Settings.Cookie), malStatus, st.Settings.IntervalMinutes', 'html.EscapeString(st.Settings.Cookie), malConfigPanel, st.Settings.IntervalMinutes', 1)
-
-# OAuth must read saved config (with environment fallback during migration), never require compose credentials.
 old = '''func (a *App) oauthStart(w http.ResponseWriter, r *http.Request) {
 \tcid := os.Getenv("MAL_CLIENT_ID")
 \tred := os.Getenv("MAL_REDIRECT_URI")
@@ -68,7 +59,6 @@ new = '''func (a *App) oauthStart(w http.ResponseWriter, r *http.Request) {
 if old not in s:
     raise SystemExit('oauthStart anchor not found')
 s = s.replace(old, new, 1)
-
 old_vals = '''\tvals := url.Values{"client_id": {os.Getenv("MAL_CLIENT_ID")}, "grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {os.Getenv("MAL_REDIRECT_URI")}, "code_verifier": {verifier}}
 \tif sec := os.Getenv("MAL_CLIENT_SECRET"); sec != "" {
 \t\tvals.Set("client_secret", sec)
@@ -87,7 +77,6 @@ new_vals = '''\tcid, sec, red := a.malCredentials()
 if old_vals not in s:
     raise SystemExit('oauthCallback credentials anchor not found')
 s = s.replace(old_vals, new_vals, 1)
-
 old_refresh = '''\tvals := url.Values{"client_id": {os.Getenv("MAL_CLIENT_ID")}, "grant_type": {"refresh_token"}, "refresh_token": {t.RefreshToken}}
 \tif sec := os.Getenv("MAL_CLIENT_SECRET"); sec != "" {
 \t\tvals.Set("client_secret", sec)
@@ -105,10 +94,8 @@ new_refresh = '''\tcid, sec, _ := a.malCredentials()
 if old_refresh not in s:
     raise SystemExit('refresh credentials anchor not found')
 s = s.replace(old_refresh, new_refresh, 1)
-
 p.write_text(s, encoding='utf-8')
 
-# New MAL config implementation kept separate from main.go.
 Path('mal_config.go').write_text(r'''package main
 
 import (
@@ -131,8 +118,6 @@ func (a *App) malCredentials() (string, string, string) {
     return cid, sec, red
 }
 
-// importMALConfigFromEnv performs a one-time migration for existing deployments.
-// Once persisted, Portainer no longer needs MAL credentials in the stack YAML.
 func (a *App) importMALConfigFromEnv() {
     a.mu.Lock()
     changed := false
@@ -195,10 +180,8 @@ func (a *App) saveMALSettings(w http.ResponseWriter, r *http.Request) {
 ''', encoding='utf-8')
 
 Path('VERSION').write_text('1.7.2\n', encoding='utf-8')
-
 Path('docker-compose.portainer.yml').write_text('''version: "3.8"\n\nservices:\n  animeav1-mal-sync:\n    image: ovelayos/animeav1-mal-sync:1.7.2\n    container_name: animeav1-mal-sync\n    restart: unless-stopped\n\n    ports:\n      - "8787:8787"\n\n    environment:\n      SYNC_INTERVAL_MINUTES: "60"\n      DRY_RUN: "true"\n      ONLY_INCREASE: "true"\n      AUTO_SYNC: "false"\n\n      TITLE_MATCH_THRESHOLD: "80"\n      REVERSE_TITLE_MATCH_THRESHOLD: "92"\n\n      DATA_DIR: "/data"\n      LISTEN_ADDR: ":8787"\n      LOG_TIMEZONE: "Europe/Madrid"\n      CACHE_REVALIDATE_HOURS: "24"\n\n    volumes:\n      - animeav1-mal-sync-data:/data\n\n    security_opt:\n      - seccomp=unconfined\n\nvolumes:\n  animeav1-mal-sync-data:\n    name: animeav1-mal-sync-data\n''', encoding='utf-8')
 
-# Runtime image must include the new Go source file.
 d = Path('Dockerfile')
 ds = d.read_text(encoding='utf-8')
 ds = ds.replace('COPY main.go ./', 'COPY *.go ./')
