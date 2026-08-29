@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	appVersion = "1.6.1"
+	appVersion = "1.7.2"
 	authURL    = "https://myanimelist.net/v1/oauth2/authorize"
 	tokenURL   = "https://myanimelist.net/v1/oauth2/token"
 	apiBase    = "https://api.myanimelist.net/v2"
@@ -45,6 +45,9 @@ type Settings struct {
 	DryRun          bool   `json:"dry_run"`
 	OnlyIncrease    bool   `json:"only_increase"`
 	AutoSync        bool   `json:"auto_sync"`
+	MALClientID     string `json:"mal_client_id,omitempty"`
+	MALClientSecret string `json:"mal_client_secret,omitempty"`
+	MALRedirectURI  string `json:"mal_redirect_uri,omitempty"`
 }
 
 type IDString string
@@ -220,6 +223,7 @@ func main() {
 	}
 	app.ensureDefaultAliases()
 	app.load()
+	app.importMALConfigFromEnv()
 	app.loadCache()
 
 	mux := http.NewServeMux()
@@ -230,6 +234,7 @@ func main() {
 	mux.HandleFunc("/api/logs", app.logsAPI)
 	mux.HandleFunc("/cookie", app.saveCookie)
 	mux.HandleFunc("/settings", app.saveSettings)
+	mux.HandleFunc("/mal/settings", app.saveMALSettings)
 	mux.HandleFunc("/check", app.check)
 	mux.HandleFunc("/test", app.check)
 	mux.HandleFunc("/sync", app.syncHandler)
@@ -468,6 +473,7 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 			malStatus += " como " + html.EscapeString(st.MALUsername)
 		}
 	}
+	malConfigPanel := a.malConfigPanel(r, st, malStatus)
 	lastStatus := st.Last.Status
 	if lastStatus == "" {
 		lastStatus = "Nunca"
@@ -480,7 +486,7 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 body{font-family:Arial,sans-serif;background:#111827;color:#e5e7eb;max-width:1000px;margin:30px auto;padding:0 16px}h1{margin-bottom:8px}.card{background:#1f2937;border-radius:12px;padding:20px;margin:16px 0}input,textarea{width:100%%;box-sizing:border-box;background:#111827;color:#fff;border:1px solid #4b5563;border-radius:8px;padding:10px;margin:6px 0 12px}button,.btn{display:inline-block;background:#14b8a6;color:#041311;border:0;border-radius:8px;padding:10px 15px;font-weight:bold;text-decoration:none;cursor:pointer}.secondary{background:#374151;color:#fff}.danger{background:#ef4444;color:#fff}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}.stat{background:#111827;padding:12px;border-radius:8px}.stat.clickable{cursor:pointer}.stat.clickable:hover{outline:1px solid #14b8a6}.muted{color:#9ca3af}.id-link{color:#9ca3af;text-decoration:none}.id-link:hover{color:#d1d5db;text-decoration:underline}.msg{white-space:pre-wrap;word-break:break-word}.progress-wrap{display:none;margin-top:16px}.progress-track{height:22px;background:#111827;border:1px solid #4b5563;border-radius:999px;overflow:hidden}.progress-bar{height:100%%;width:0;background:#14b8a6;transition:width .25s}.progress-label{margin-top:7px;color:#d1d5db}.modal{display:none;position:fixed;inset:0;background:#000b;z-index:20;padding:4vh 3vw}.modal.open{display:block}.modal-box{background:#1f2937;max-width:1100px;max-height:88vh;margin:auto;border-radius:12px;padding:18px;overflow:auto}.modal-head{display:flex;justify-content:space-between;align-items:center;gap:15px}.table-wrap{overflow:auto}table{width:100%%;border-collapse:collapse;font-size:14px}th,td{padding:9px;border-bottom:1px solid #374151;text-align:left;vertical-align:top}th{position:sticky;top:0;background:#1f2937}.ok{color:#6ee7b7}.bad{color:#fca5a5}.warn{color:#fde68a}</style></head><body>
 <h1>AnimeAV1 → MyAnimeList</h1><div class="muted">v%s · EX4100 ARMv7 · lectura SvelteKit por HTTP</div>
 <div class="card"><h2>AnimeAV1</h2><p>%s</p><form method="post" action="/cookie"><label>Cookie completa del navegador</label><textarea name="cookie" rows="3" placeholder="session=...; otra_cookie=...">%s</textarea><button>Guardar cookie</button> <a class="btn secondary" href="/check">Verificar</a></form></div>
-<div class="card"><h2>MyAnimeList</h2><p>%s</p><a class="btn" href="/oauth/start">Conectar con MAL</a> <a class="btn danger" href="/oauth/disconnect">Desconectar</a></div>
+%s
 <div class="card"><h2>Sincronización</h2><form method="post" action="/settings"><label>Intervalo en minutos</label><input type="number" min="1" name="interval" value="%d"><label><input style="width:auto" type="checkbox" name="dry" %s> Modo simulación (no escribe en MAL)</label><br><label><input style="width:auto" type="checkbox" name="increase" %s> Solo aumentar episodios</label><br><label><input style="width:auto" type="checkbox" name="auto" %s> Sincronización automática</label><br><br><button>Guardar ajustes</button> <button formaction="/sync">Sincronizar ahora</button></form><form method="post" action="/sync/stop" style="display:inline"><button id="stopButton" class="danger" style="display:none">Detener sincronización</button></form> <button class="secondary" onclick="openCache()">Ver caché</button> <form method="post" action="/cache/clear" style="display:inline" onsubmit="return confirm('¿Eliminar toda la caché?')"><button id="clearCacheButton" class="secondary">Eliminar caché</button></form><p class="muted">Caché persistente: <b id="cacheCount">%d</b> coincidencias.</p><div id="progressWrap" class="progress-wrap"><div class="progress-track"><div id="progressBar" class="progress-bar"></div></div><div id="progressLabel" class="progress-label"></div></div></div>
 <div class="card"><h2>Estado</h2><div class="grid"><div class="stat"><b>Ejecutándose</b><br><span id="runningText">%s</span></div><div class="stat"><b>Último estado</b><br><span id="lastStatus">%s</span></div><div class="stat clickable" onclick="openResults('all')"><b>Encontrados</b><br><span id="found">%d</span></div><div class="stat clickable" onclick="openResults('updated')"><b>Actualizados</b><br><span id="updated">%d</span></div><div class="stat clickable" onclick="openResults('error')"><b>Errores</b><br><span id="errors">%d</span></div></div><p id="lastMessage" class="msg">%s</p><p><a class="btn secondary" target="_blank" rel="noopener" href="/health">JSON</a> <a class="btn secondary" target="_blank" rel="noopener" href="/history">Logs</a></p></div>
 <div id="modal" class="modal" onclick="if(event.target===this)closeModal()"><div class="modal-box"><div class="modal-head"><h2 id="modalTitle">Detalles</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div><div id="modalBody"></div></div></div>
@@ -501,7 +507,7 @@ async function inspectCacheMatch(mediaID){showModal('Candidatos','<p>Buscando ca
 async function recomputeCacheMatch(mediaID){if(!confirm('¿Recalcular esta coincidencia ahora?'))return;try{const r=await fetch('/api/cache/recompute',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'media_id='+encodeURIComponent(mediaID)});const x=await r.json();if(!r.ok||!x.ok)throw new Error(x.error||'No se pudo recalcular');await openCache();await pollStatus()}catch(e){alert(e.message)}}
 async function openCache(){try{const r=await fetch('/api/cache',{cache:'no-store'});const x=await r.json();const items=(x.items||[]).map(i=>({media_id:i.media_id,source_title:i.source_title,mal_title:i.mal_title,mal_id:i.mal_id,mal_title_2:i.mal_title_2,mal_id_2:i.mal_id_2,match_score:i.match_score,from:i.mal_seen,to:i.source_seen,result:'cache',message:'Validado: '+(i.last_validated?new Date(i.last_validated*1000).toLocaleString():'—')}));showModal('Caché ('+items.length+')',resultTable(items,true));document.querySelectorAll('.trash-button').forEach(b=>b.addEventListener('click',()=>{const row=b.closest('tr');deleteCacheMatch(b.dataset.mediaId,row?.children[0]?.textContent||'esta entrada')}));document.querySelectorAll('.inspect-button').forEach(b=>b.addEventListener('click',()=>inspectCacheMatch(b.dataset.mediaId)));document.querySelectorAll('.recompute-button').forEach(b=>b.addEventListener('click',()=>recomputeCacheMatch(b.dataset.mediaId)))}catch(e){showModal('Caché','<p>Error al cargar la caché.</p>')}}
 updateProgress({running:initial.running,progress_processed:initial.processed,progress_total:initial.total,progress_message:initial.message,progress_trigger:initial.trigger});setInterval(pollStatus,1000);pollStatus();
-</script></body></html>`, appVersion, cookieStatus, html.EscapeString(st.Settings.Cookie), malStatus, st.Settings.IntervalMinutes, checked(st.Settings.DryRun), checked(st.Settings.OnlyIncrease), checked(st.Settings.AutoSync), a.cacheCount(), runText, html.EscapeString(lastStatus), st.Last.Found, st.Last.Updated, st.Last.Errors, html.EscapeString(st.Last.Message), running, processed, total, progressMessage, progressTrigger)
+</script></body></html>`, appVersion, cookieStatus, html.EscapeString(st.Settings.Cookie), malConfigPanel, st.Settings.IntervalMinutes, checked(st.Settings.DryRun), checked(st.Settings.OnlyIncrease), checked(st.Settings.AutoSync), a.cacheCount(), runText, html.EscapeString(lastStatus), st.Last.Found, st.Last.Updated, st.Last.Errors, html.EscapeString(st.Last.Message), running, processed, total, progressMessage, progressTrigger)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	io.WriteString(w, page)
 }
@@ -803,10 +809,9 @@ func randomURLSafe(n int) string {
 	return strings.TrimRight(base64.RawURLEncoding.EncodeToString(b), "=")
 }
 func (a *App) oauthStart(w http.ResponseWriter, r *http.Request) {
-	cid := os.Getenv("MAL_CLIENT_ID")
-	red := os.Getenv("MAL_REDIRECT_URI")
+	cid, _, red := a.malCredentials()
 	if cid == "" || red == "" {
-		http.Error(w, "Faltan MAL_CLIENT_ID o MAL_REDIRECT_URI", 500)
+		http.Error(w, "Configura primero MyAnimeList desde la interfaz", http.StatusPreconditionRequired)
 		return
 	}
 	verifier := randomURLSafe(64)
@@ -830,8 +835,13 @@ func (a *App) oauthCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Respuesta OAuth inválida", 400)
 		return
 	}
-	vals := url.Values{"client_id": {os.Getenv("MAL_CLIENT_ID")}, "grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {os.Getenv("MAL_REDIRECT_URI")}, "code_verifier": {verifier}}
-	if sec := os.Getenv("MAL_CLIENT_SECRET"); sec != "" {
+	cid, sec, red := a.malCredentials()
+	if cid == "" || red == "" {
+		http.Error(w, "Configuración de MyAnimeList incompleta", http.StatusPreconditionRequired)
+		return
+	}
+	vals := url.Values{"client_id": {cid}, "grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {red}, "code_verifier": {verifier}}
+	if sec != "" {
 		vals.Set("client_secret", sec)
 	}
 	req, _ := http.NewRequest("POST", tokenURL, strings.NewReader(vals.Encode()))
@@ -881,8 +891,12 @@ func (a *App) refreshIfNeeded() error {
 	if time.Now().Unix() < t.ObtainedAt+t.ExpiresIn-120 {
 		return nil
 	}
-	vals := url.Values{"client_id": {os.Getenv("MAL_CLIENT_ID")}, "grant_type": {"refresh_token"}, "refresh_token": {t.RefreshToken}}
-	if sec := os.Getenv("MAL_CLIENT_SECRET"); sec != "" {
+	cid, sec, _ := a.malCredentials()
+	if cid == "" {
+		return errors.New("falta la configuración de MyAnimeList")
+	}
+	vals := url.Values{"client_id": {cid}, "grant_type": {"refresh_token"}, "refresh_token": {t.RefreshToken}}
+	if sec != "" {
 		vals.Set("client_secret", sec)
 	}
 	req, _ := http.NewRequest("POST", tokenURL, strings.NewReader(vals.Encode()))
