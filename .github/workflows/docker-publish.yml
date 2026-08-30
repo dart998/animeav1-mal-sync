@@ -8,6 +8,10 @@ on:
       - docker-compose.portainer.yml
   workflow_dispatch:
 
+concurrency:
+  group: animeav1-mal-sync-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
