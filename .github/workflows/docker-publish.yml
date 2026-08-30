@@ -3,16 +3,21 @@ name: Test and publish Docker image
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - docker-compose.yml
+      - docker-compose.portainer.yml
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   test-and-publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
@@ -41,6 +46,40 @@ jobs:
           tags: |
             ovelayos/animeav1-mal-sync:${{ steps.version.outputs.value }}
             ovelayos/animeav1-mal-sync:latest
+
+      - name: Update compose image tag
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+          image = "ovelayos/animeav1-mal-sync"
+          pattern = rf'(image:\s+\$\{{APP_IMAGE:-{re.escape(image)}:)[^}}]+(\}})'
+
+          for filename in ("docker-compose.yml", "docker-compose.portainer.yml"):
+              path = Path(filename)
+              text = path.read_text()
+              updated, count = re.subn(pattern, rf'\g<1>{version}\2', text, count=1)
+              if count != 1:
+                  raise SystemExit(f"Could not locate APP_IMAGE in {filename}")
+              path.write_text(updated)
+          PY
+
+          if git diff --quiet -- docker-compose.yml docker-compose.portainer.yml; then
+            echo "Compose files already point to ${VERSION}"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add docker-compose.yml docker-compose.portainer.yml
+            git commit -m "Deploy ${VERSION}"
+            git push origin HEAD:main
+          fi
 
       - name: Redeploy Portainer stack
         shell: bash
