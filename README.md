@@ -1,255 +1,207 @@
 # AnimeAV1 → MyAnimeList Sync
 
-## Cambios de v1.6.1
+Aplicación web en Go que lee la biblioteca de AnimeAV1 y sincroniza progreso y estado con MyAnimeList. En la rama estable, AnimeAV1 se usa como origen de solo lectura: la aplicación no modifica datos allí.
 
-- Se elimina del panel principal la sección de logs en directo.
-- El botón **Historial** pasa a llamarse **Logs** y continúa abriendo el historial completo en otra pestaña.
-- Se conservan las rutas y el almacenamiento persistente de logs.
+La imagen se publica para `linux/arm/v7`, `linux/arm64` y `linux/amd64`, con soporte específico para WD My Cloud EX4100 + Docker + Portainer CE.
 
-## Cambios de v1.6.0
+## Estado actual
 
-- Los identificadores grises de AnimeAV1 y MyAnimeList son enlaces en las vistas **Caché**, **Encontrados** y **Actualizados**.
-- Los MAL ID abren directamente la ficha correspondiente en MyAnimeList, incluidos los segundos IDs de temporadas divididas.
-- Los IDs internos de AnimeAV1 se resuelven contra la biblioteca para abrir la ficha exacta mediante su `slug` real.
-- Los enlaces se abren en una pestaña nueva y conservan el estilo visual gris de la interfaz.
+Versión estable: `1.7.3`.
 
-## Cambios de v1.5.6
+Cambios recientes:
 
-- La asignación manual se integra directamente en cada error de matching.
-- Se elimina la duplicación visual del ID de AnimeAV1 en la columna Detalle.
-- Se añade un enlace visible para buscar el título directamente en MyAnimeList.
-- Al guardar uno o dos IDs de MAL, el error se elimina de forma persistente, se recalculan los contadores y la fila desaparece sin recargar.
-
-- La asignación manual ya no aparece como una sección independiente.
-- Cada error de matching incluye sus propios campos para guardar uno o dos IDs de MyAnimeList.
-- El segundo ID permite asociar temporadas partidas en dos entradas de MAL.
-- Los identificadores de AnimeAV1 se tratan como texto y admiten valores numéricos, UUID, slugs u otros formatos.
-- Se mantiene compatibilidad con cachés antiguas que guardaban el identificador de AnimeAV1 como número.
-- GitHub Actions queda fuera del paquete; la publicación se realiza mediante `release.sh`.
-
-## Cambios de v1.5.3
-
-- Mantiene el botón **Detener sincronización** durante cualquier ejecución.
-- Detecta temporadas unificadas en AnimeAV1 y partidas en MAL como `Título` + `Título Part 2`.
-- Reparte el progreso secuencialmente: primero completa la parte 1 y pasa el excedente a la parte 2.
-- Endurece la detección: la segunda ficha solo se acepta cuando, al retirar únicamente `Part 2`, conserva exactamente el título de la primera ficha o uno de sus títulos alternativos.
-- Conserva el número de temporada y exige el mismo `media_type` cuando MAL proporciona ese dato.
-- Invalida emparejamientos dobles inseguros guardados por v1.5.1, incluidos `Mushoku Tensei` + `86 Part 2` y `Kill la Kill` + `Luv(sic) Part 2`.
-- Guarda ambos IDs de MAL en la caché y respeta `Solo aumentar episodios` independientemente en cada parte.
-
-## Cambios principales
-
-- Searcher multiconsulta: título completo, sin puntuación, base y recortes progresivos.
-- Hasta 100 resultados por consulta de MAL, fusionados y deduplicados antes de puntuar.
-- `aliases.json` compatible con formato clásico y enriquecido (`search`/`preferred`).
-- Caché versionada por motor de matching; las entradas antiguas se revalidan automáticamente.
-- Diagnósticos distintos para «sin candidatos» y «ningún candidato supera el umbral».
-- Se mantiene la separación estricta entre `Season 2` y `Part 2`; el soporte 1→N queda preparado pero no escribe todavía en dos fichas MAL.
-- `release.sh` reutiliza las credenciales guardadas por Docker Desktop y no fuerza `docker login`.
-
-# AnimeAV1 → MyAnimeList Sync
-
-
-## Cambios de v1.4.2
-
-- Matcher de seguridad reescrito: el número de temporada nunca puede rescatar un título base distinto.
-- Búsqueda en MAL por título base y evaluación local de todos los candidatos.
-- Coincidencias exactas, coincidencias de título base y coincidencias difusas se validan por separado.
-- Las coincidencias difusas exigen similitud alta y solapamiento real de palabras.
-- Rechazo de secuelas explícitas contra entradas sin temporada.
-- Detección de temporadas expresadas como `2nd Season`, `Season 2`, números romanos o un número final.
-- Invalidación automática de coincidencias inseguras guardadas por versiones anteriores.
-- Umbrales predeterminados más conservadores: `BASE_TITLE_MATCH_THRESHOLD=88` y `TITLE_MATCH_THRESHOLD=88`.
-
-Mantén `DRY_RUN=true` durante la primera ejecución y revisa el listado completo antes de activar escrituras.
-
-Aplicación web en Go que lee la biblioteca de AnimeAV1 y sincroniza el progreso con MyAnimeList. AnimeAV1 se utiliza siempre como origen de solo lectura: la aplicación nunca escribe ni modifica datos allí.
-
-La imagen está preparada para `linux/arm/v7` y se puede ejecutar en un WD My Cloud EX4100 mediante Docker y Portainer Community Edition.
-
-## Cambios de la versión 1.4.2
-
-Esta versión corrige los fallos detectados durante la primera sincronización con caché:
-
-- Limita y simplifica las consultas enviadas al buscador de MAL para evitar `HTTP 400: invalid q` con títulos largos o caracteres especiales.
-- Añade hasta tres intentos para consultas GET que fallen por timeout, HTTP 429 o errores 5xx, con esperas progresivas de 1 y 2 segundos.
-- Compara también el título inglés, japonés y los sinónimos proporcionados por MAL.
-- Rechaza de forma obligatoria coincidencias con temporadas explícitamente diferentes, por ejemplo `2nd Season` frente a `4th Season`.
-- Invalida automáticamente entradas antiguas de caché cuando la temporada de AnimeAV1 no coincide con la temporada almacenada de MAL.
-- Mantiene el umbral de coincidencia configurable y la protección `ONLY_INCREASE`.
-
-Después de actualizar desde la versión 1.2.0 es recomendable pulsar **Eliminar caché** una vez antes de la primera sincronización. Ejecuta primero una simulación con `DRY_RUN=true`, revisa el resultado y solo después activa la escritura real.
-
-> La aplicación no puede revertir automáticamente modificaciones incorrectas que una versión anterior ya haya realizado sobre otra temporada en MAL. Revisa manualmente las entradas afectadas antes de continuar.
+- Configuración de MyAnimeList desde la propia interfaz web.
+- Las credenciales de aplicación de MAL se guardan en `/data/config/config.json`; ya no es necesario mantenerlas en el YAML de Portainer.
+- Si la autorización MAL ya es válida, se ocultan Client ID, Client Secret, Redirect URI, Guardar configuración MAL y Conectar con MAL. La configuración queda accesible desde un desplegable para cambios manuales.
+- Si la cookie de AnimeAV1 está verificada y es válida, se ocultan el textarea de cookie y sus botones. Se puede cambiar desde un desplegable.
+- Los enlaces a AnimeAV1 se abren directamente mediante el `slug` real, sin reutilizar la cookie desde el backend para abrir la ficha.
+- La caché permite asignación manual de uno o dos MAL ID para temporadas divididas.
+- Publicación Docker y redeploy de Portainer automatizados con GitHub Actions + webhook.
 
 ## Funciones principales
 
 - Autorización de MyAnimeList mediante OAuth PKCE.
-- Lectura de la biblioteca desde `https://animeav1.com/cuenta/listas`.
-- Emparejamiento de títulos de AnimeAV1 con sus entradas correspondientes en MAL.
-- Actualización de episodios y estado solamente cuando existen cambios.
+- Lectura de la biblioteca desde AnimeAV1 mediante sesión HTTP.
+- Emparejamiento de títulos AnimeAV1 ↔ MAL.
+- Soporte para temporadas unificadas en AnimeAV1 y divididas en dos fichas MAL.
+- Actualización de episodios y estado solo cuando existen cambios.
+- Protección `ONLY_INCREASE` para impedir reducciones de episodios vistos.
 - Sincronización manual o automática.
-- Intervalo automático predeterminado de 60 minutos.
-- Barra de progreso para sincronizaciones manuales.
-- Botón para detener una sincronización manual, incluidas sus peticiones HTTP activas.
-- Terminal integrada con los últimos logs y timestamp legible.
-- Historial persistente en JSONL, aunque el botón JSONL no se muestra en la interfaz.
-- Favicon local de AnimeAV1.
+- Intervalo automático configurable.
+- Barra de progreso y parada de sincronización manual.
+- Caché persistente de coincidencias.
+- Revalidación periódica contra MAL.
+- Historial persistente de sincronizaciones.
+- Herramientas para inspeccionar, recalcular o eliminar coincidencias de caché.
+- Asignación manual de MAL ID cuando el matching automático no es seguro.
 
-## Caché y rendimiento
+## Persistencia
 
-Las coincidencias AnimeAV1 ↔ MAL y su último estado confirmado se guardan en:
+El stack usa el volumen Docker con nombre fijo:
 
 ```text
-/data/cache.json
+animeav1-mal-sync-data
 ```
 
-En cada ejecución la aplicación descarga una sola vez la biblioteca de AnimeAV1. Después, para cada anime:
+montado en:
 
-1. Busca su entrada en la caché.
-2. Si título, episodios y estado no cambiaron y la entrada todavía está dentro del periodo de validación, la omite sin consultar MAL.
-3. Si cambió o debe revalidarse, consulta directamente el `mal_id` conocido.
-4. Solo vuelve a buscar por título cuando el anime es nuevo, el título cambió o el ID almacenado dejó de ser válido.
-5. Solo envía un `PUT` a MAL cuando el estado o los episodios realmente difieren.
+```text
+/data
+```
 
-La revalidación periódica contra MAL es de 24 horas de forma predeterminada. Esto detecta cambios realizados directamente en MAL sin repetir todas las búsquedas en cada sincronización horaria.
+Archivos principales:
 
-El botón **Eliminar caché** borra únicamente `/data/cache.json`. No elimina la cookie de AnimeAV1, OAuth, configuración ni historial. La caché no puede eliminarse mientras se ejecuta una sincronización.
-
-## Archivos persistentes
-
-- `/data/config/config.json`: configuración, cookie de AnimeAV1 y credenciales OAuth de MAL.
-- `/data/cache.json`: coincidencias y último estado validado.
+- `/data/config/config.json`: configuración, cookie de AnimeAV1, configuración de aplicación MAL y tokens OAuth.
+- `/data/cache.json`: coincidencias AnimeAV1 ↔ MAL y último estado validado.
 - `/data/history.jsonl`: historial de sincronizaciones.
 
-No elimines el volumen persistente al actualizar el contenedor.
+No elimines el volumen persistente al actualizar o recrear el contenedor.
 
-## Variables de entorno para Portainer
+## Configuración de AnimeAV1
 
-El repositorio incluye `.env.example`. Copia su contenido en las variables de entorno del stack o impórtalo desde Portainer después de sustituir los valores de ejemplo.
+La cookie de AnimeAV1 se introduce desde la interfaz web.
 
-Variables principales:
+Cuando la sesión es válida, el formulario se oculta y solo se muestra el estado de la sesión. La opción para sustituir la cookie permanece disponible en un desplegable.
 
-| Variable | Valor recomendado | Descripción |
+La aplicación verifica la cookie leyendo la biblioteca de AnimeAV1.
+
+## Configuración de MyAnimeList
+
+La configuración se realiza desde la interfaz web:
+
+- Client ID.
+- Client Secret, si la aplicación MAL lo utiliza.
+- Redirect URI.
+
+Los valores se guardan en `/data/config/config.json`.
+
+Las variables `MAL_CLIENT_ID`, `MAL_CLIENT_SECRET` y `MAL_REDIRECT_URI` siguen siendo compatibles como fallback y para migraciones antiguas, pero no son necesarias en un despliegue nuevo.
+
+Después de guardar la configuración, utiliza **Conectar con MAL** para completar OAuth PKCE. Si la sesión OAuth existente es válida, los campos de configuración y el botón de conexión se ocultan automáticamente.
+
+## Variables de entorno
+
+El stack actual utiliza:
+
+| Variable | Predeterminado | Descripción |
 |---|---:|---|
-| `MAL_CLIENT_ID` | obligatorio | Client ID de la aplicación creada en MAL. |
-| `MAL_CLIENT_SECRET` | según la aplicación | Client secret de MAL. |
-| `MAL_REDIRECT_URI` | `http://IP_DEL_EX4100:8787/oauth/callback` | Debe coincidir exactamente con el registrado en MAL. |
 | `SYNC_INTERVAL_MINUTES` | `60` | Intervalo de sincronización automática. |
-| `AUTO_SYNC` | `false` | Activa o desactiva la sincronización automática. |
-| `DRY_RUN` | `true` inicialmente | Simula las actualizaciones sin escribir en MAL. |
+| `AUTO_SYNC` | `false` | Activa la sincronización automática. |
+| `DRY_RUN` | `true` | Simula las actualizaciones sin escribir en MAL. |
 | `ONLY_INCREASE` | `true` | Impide reducir episodios vistos. |
-| `TITLE_MATCH_THRESHOLD` | `80` | Puntuación mínima para aceptar una coincidencia. |
-| `CACHE_REVALIDATE_HOURS` | `24` | Tiempo máximo antes de comprobar de nuevo una entrada en MAL. |
-| `LOG_TIMEZONE` | `Europe/Madrid` | Zona horaria mostrada en los logs. |
+| `TITLE_MATCH_THRESHOLD` | `80` | Umbral mínimo del matching AnimeAV1 → MAL. |
+| `REVERSE_TITLE_MATCH_THRESHOLD` | `92` | Reservado para la sincronización inversa. |
+| `CACHE_REVALIDATE_HOURS` | `24` | Horas antes de revalidar una entrada contra MAL. |
+| `LOG_TIMEZONE` | `Europe/Madrid` | Zona horaria de los logs. |
 | `DATA_DIR` | `/data` | Directorio persistente. |
 | `LISTEN_ADDR` | `:8787` | Dirección y puerto del servidor web. |
 
-La cookie de AnimeAV1 se introduce y verifica desde la interfaz web; no es necesario guardarla en el archivo de entorno.
+Para la primera ejecución se recomienda mantener `DRY_RUN=true`, revisar los resultados y desactivarlo después.
 
-## Despliegue con Portainer
+## Despliegue con Portainer desde Git
 
-Usa siempre una etiqueta fija en producción:
+El stack está preparado para ser gestionado directamente desde este repositorio.
 
-```yaml
-services:
-  animeav1-mal-sync:
-    image: ovelayos/animeav1-mal-sync:v1.4.2
-    container_name: animeav1-mal-sync
-    restart: unless-stopped
-    ports:
-      - "8787:8787"
-    env_file:
-      - stack.env
-    volumes:
-      - animeav1-mal-data:/data
-    security_opt:
-      - seccomp=unconfined
+Configuración recomendada en Portainer:
 
-volumes:
-  animeav1-mal-data:
+```text
+Repository URL:
+https://github.com/dart998/animeav1-mal-sync
+
+Repository reference:
+refs/heads/main
+
+Compose path:
+docker-compose.yml
 ```
 
-En el editor web de Portainer también puedes mantener las variables dentro de `environment:`. La opción `env_file` solo debe usarse cuando el archivo exista realmente en el host o el método de despliegue permita adjuntarlo.
+El compose utiliza siempre:
 
-Acceso:
+```yaml
+image: ovelayos/animeav1-mal-sync:latest
+```
+
+Por tanto, un redeploy con repull obtiene la última versión estable publicada.
+
+El acceso web predeterminado es:
 
 ```text
 http://IP_DEL_EX4100:8787
 ```
 
-## Publicar una nueva versión
+## Publicación y despliegue automáticos
 
-El script `release.sh` automatiza GitHub y Docker Hub en una sola ejecución. Debe ejecutarse desde una copia clonada del repositorio que tenga configurado el remoto `origin` por SSH.
+La publicación ya no depende de scripts locales.
 
-Primera preparación:
+El workflow `.github/workflows/docker-publish.yml` se ejecuta en cada `push` a `main` y también puede iniciarse manualmente desde GitHub Actions.
 
-```bash
-chmod +x release.sh
-```
+Flujo:
 
-Publicación:
-
-```bash
-./release.sh
-```
-
-El script:
-
-1. Pregunta la versión, por ejemplo `v1.4.2`.
-2. Valida el formato y comprueba que la etiqueta todavía no exista.
-3. Arranca `ssh-agent` cuando sea necesario y añade `~/.ssh/id_ed25519.pem` o la clave indicada.
-4. Verifica el remoto y que la rama local incluya los últimos cambios de `origin/main`.
-5. Actualiza `VERSION` y fija `docker-compose.portainer.yml` a la nueva etiqueta.
-6. Ejecuta `git add -A`, por lo que incluye archivos nuevos, modificados y eliminados.
-7. Muestra los cambios y pide confirmación.
-8. Crea un commit con el nombre de la versión y una etiqueta Git anotada.
-9. Sube la rama y la etiqueta a GitHub.
-10. Construye una sola imagen ARMv7 y la publica con dos etiquetas:
+1. Checkout del repositorio.
+2. Configuración de Go.
+3. `go test ./...`.
+4. Configuración de QEMU y Docker Buildx.
+5. Login en Docker Hub mediante GitHub Secrets.
+6. Lectura de la versión desde `VERSION`.
+7. Build multiarch para:
+   - `linux/arm/v7`
+   - `linux/arm64`
+   - `linux/amd64`
+8. Publicación de:
 
 ```text
-ovelayos/animeav1-mal-sync:v1.4.2
+ovelayos/animeav1-mal-sync:<VERSION>
 ovelayos/animeav1-mal-sync:latest
 ```
 
-Las dos etiquetas apuntan al mismo digest. Las versiones anteriores conservan su etiqueta fija para permitir rollback.
+9. Si la publicación termina correctamente, GitHub Actions hace un `POST` al webhook de Portainer.
+10. Portainer vuelve a desplegar el stack y hace pull de `latest`.
 
-### Por qué se usa `git add -A`
+Secrets necesarios en GitHub Actions:
 
-`git commit -am` solo incluye archivos que Git ya estaba siguiendo. No incorpora archivos nuevos como un favicon, un script o un archivo de configuración. `git add -A` evita que una versión se publique incompleta.
-
-### Requisitos del script
-
-- Git.
-- Acceso SSH al repositorio de GitHub.
-- Clave SSH válida; por defecto `~/.ssh/id_ed25519.pem`.
-- Docker iniciado.
-- Docker Buildx.
-- Acceso a Docker Hub mediante contraseña o Access Token.
-
-## Publicación manual alternativa
-
-```bash
-VERSION=v1.4.2
-
-docker buildx build \
-  --platform linux/arm/v7 \
-  -t "ovelayos/animeav1-mal-sync:${VERSION}" \
-  -t "ovelayos/animeav1-mal-sync:latest" \
-  --push .
+```text
+DOCKERHUB_USERNAME
+DOCKERHUB_TOKEN
+PORTAINER_WEBHOOK_URL
 ```
 
-En Portainer utiliza la etiqueta fija de la versión y conserva siempre el volumen `animeav1-mal-data`.
+`PORTAINER_WEBHOOK_URL` debe corresponder exclusivamente al stack `animeav1-mal-sync`.
 
-## Cambios de v1.4.2
+## Versionado
 
-- Añade los botones **🔍**, **↻** y **🗑️** en el visor de caché para inspeccionar candidatos, recalcular una coincidencia y eliminarla.
-- Muestra para cada candidato de MAL la puntuación, episodios, tipo y motivo de aceptación o rechazo.
-- Añade `/data/aliases.json`, creado automáticamente con alias iniciales y editable sin reconstruir la imagen.
-- Los alias amplían la búsqueda, pero solo aceptan coincidencias exactas o de título base exacto y siguen respetando las reglas de temporada.
-- Separa explícitamente `Season 2` de `Part 2`: una parte no se trata como una temporada individual.
-- Corrige el `release.sh` para usar las credenciales persistentes de Docker Desktop sin solicitar el PAT en cada publicación.
+La versión estable se guarda en el archivo:
 
-### Temporadas acumuladas divididas en partes
+```text
+VERSION
+```
 
-Esta versión evita el falso positivo `Season 2 → Part 2`, pero todavía no escribe una entrada de AnimeAV1 sobre dos fichas MAL. Ese mapeo múltiple se mostrará como candidato para revisión y se incorporará en una versión posterior una vez validado con más casos reales.
+El Dockerfile utiliza ese valor durante la compilación y GitHub Actions lo reutiliza como tag de Docker Hub.
+
+Las versiones estables publican también `latest`. Las versiones de desarrollo/RC deben usar etiquetas explícitas y no sustituir `latest` hasta considerarse estables.
+
+## Rollback
+
+Cada versión estable conserva su tag específico en Docker Hub. Para volver temporalmente a una versión anterior, sustituye `latest` por el tag deseado en el compose y redepliega el stack, conservando siempre el mismo volumen `/data`.
+
+## Caché y matching
+
+Las coincidencias se almacenan en `/data/cache.json`.
+
+En cada sincronización la aplicación reutiliza la caché cuando es segura y consulta MAL de nuevo cuando:
+
+- el anime es nuevo;
+- cambia el título;
+- cambia el progreso o estado;
+- vence el periodo de revalidación;
+- el MAL ID guardado deja de ser válido.
+
+El botón **Eliminar caché** elimina únicamente las coincidencias. No elimina configuración, cookie, OAuth ni historial.
+
+Cuando el matching automático no alcanza el nivel de seguridad requerido, la interfaz permite indicar manualmente uno o dos MAL ID. La segunda entrada sirve para temporadas que AnimeAV1 agrupa y MAL divide en dos partes.
+
+## Seguridad
+
+- No se deben versionar cookies, tokens OAuth, contraseñas ni archivos reales de configuración.
+- Los secretos de Docker Hub y Portainer se almacenan en GitHub Actions Secrets.
+- El Client Secret de MAL no se devuelve rellenado al navegador una vez guardado.
+- La persistencia sensible permanece dentro del volumen Docker en `/data/config/config.json`.
