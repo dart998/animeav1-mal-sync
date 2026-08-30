@@ -13,19 +13,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+
       - run: go test ./...
+
       - uses: docker/setup-qemu-action@v3
+
       - uses: docker/setup-buildx-action@v3
+
       - uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - id: version
         shell: bash
         run: echo "value=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
+
       - uses: docker/build-push-action@v6
         with:
           context: .
@@ -34,3 +41,16 @@ jobs:
           tags: |
             ovelayos/animeav1-mal-sync:${{ steps.version.outputs.value }}
             ovelayos/animeav1-mal-sync:latest
+
+      - name: Redeploy Portainer stack
+        shell: bash
+        env:
+          PORTAINER_WEBHOOK_URL: ${{ secrets.PORTAINER_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+          test -n "${PORTAINER_WEBHOOK_URL}"
+          curl --fail --silent --show-error \
+            --request POST \
+            --retry 3 \
+            --retry-delay 5 \
+            "${PORTAINER_WEBHOOK_URL}"
