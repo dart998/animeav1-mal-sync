@@ -1,0 +1,55 @@
+name: Apply last-status JSON fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/fix-last-status-json.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Move JSON action to Último estado and bump version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("main.go")
+          text = path.read_text()
+
+          old = '<div class=\\"stat\\"><b>Último estado</b><br><span id=\\"lastStatus\\">%s</span></div>'
+          new = '<div class=\\"stat clickable\\" role=\\"button\\" tabindex=\\"0\\" title=\\"Ver estado JSON\\" onclick=\\"window.open(\'\/health\',\'_blank\')\\" onkeydown=\\"if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();window.open(\'\/health\',\'_blank\')}\\"><b>Último estado</b><br><span id=\\"lastStatus\\">%s</span></div>'
+
+          if old not in text:
+              raise SystemExit("Could not locate Último estado block")
+          text = text.replace(old, new, 1)
+
+          old_version = 'appVersion = "1.7.4"'
+          new_version = 'appVersion = "1.7.5"'
+          if old_version not in text:
+              raise SystemExit("Could not locate appVersion 1.7.4")
+          text = text.replace(old_version, new_version, 1)
+
+          path.write_text(text)
+          Path("VERSION").write_text("1.7.5\n")
+          PY
+
+          rm -f .github/workflows/fix-last-status-json.yml
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add main.go VERSION .github/workflows/fix-last-status-json.yml
+          git commit -m "Fix Último estado JSON interaction and release 1.7.5"
+          git push origin HEAD:main
