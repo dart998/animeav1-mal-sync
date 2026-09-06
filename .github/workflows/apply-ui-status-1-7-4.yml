@@ -1,0 +1,97 @@
+name: Apply UI status update
+
+on:
+  push:
+    branches:
+      - ui-status-row-1-7-4
+    paths:
+      - .github/workflows/apply-ui-status-1-7-4.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch UI and bump version
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('main.go')
+          text = path.read_text()
+
+          text, n = re.subn(r'appVersion = "[^"]+"', 'appVersion = "1.7.4"', text, count=1)
+          if n != 1:
+              raise SystemExit('Could not update appVersion')
+
+          old = '''\tif lastStatus == "" {
+\t\tlastStatus = "Nunca"
+\t}
+\trunText := "No"'''
+          new = '''\tif lastStatus == "" {
+\t\tlastStatus = "Nunca"
+\t}
+\tlastSyncText := "Nunca"
+\tif st.Last.Finished > 0 {
+\t\tlastSyncText = time.Unix(st.Last.Finished, 0).In(historyLocation()).Format("02/01/2006 15:04:05")
+\t}
+\trunText := "No"'''
+          if old not in text:
+              raise SystemExit('Could not locate last status block')
+          text = text.replace(old, new, 1)
+
+          old_css = '.ok{color:#6ee7b7}.bad{color:#fca5a5}.warn{color:#fde68a}'
+          new_css = '.ok{color:#6ee7b7}.bad{color:#fca5a5}.warn{color:#fde68a}.actions-row{display:flex;align-items:center;gap:6px;flex-wrap:nowrap}.actions-row form{margin:0}'
+          if old_css not in text:
+              raise SystemExit('Could not locate CSS insertion point')
+          text = text.replace(old_css, new_css, 1)
+
+          old_sync = '''<div class="card"><h2>Sincronización</h2><form method="post" action="/settings"><label>Intervalo en minutos</label><input type="number" min="1" name="interval" value="%d"><label><input style="width:auto" type="checkbox" name="dry" %s> Modo simulación (no escribe en MAL)</label><br><label><input style="width:auto" type="checkbox" name="increase" %s> Solo aumentar episodios</label><br><label><input style="width:auto" type="checkbox" name="auto" %s> Sincronización automática</label><br><br><button>Guardar ajustes</button> <button formaction="/sync">Sincronizar ahora</button></form><form method="post" action="/sync/stop" style="display:inline"><button id="stopButton" class="danger" style="display:none">Detener sincronización</button></form> <button class="secondary" onclick="openCache()">Ver caché</button> <form method="post" action="/cache/clear" style="display:inline" onsubmit="return confirm('¿Eliminar toda la caché?')"><button id="clearCacheButton" class="secondary">Eliminar caché</button></form><p class="muted">Caché persistente: <b id="cacheCount">%d</b> coincidencias.</p><div id="progressWrap" class="progress-wrap"><div class="progress-track"><div id="progressBar" class="progress-bar"></div></div><div id="progressLabel" class="progress-label"></div></div></div>'''
+          new_sync = '''<div class="card"><h2>Sincronización</h2><form id="settingsForm" method="post" action="/settings"><label>Intervalo en minutos</label><input type="number" min="1" name="interval" value="%d"><label><input style="width:auto" type="checkbox" name="dry" %s> Modo simulación (no escribe en MAL)</label><br><label><input style="width:auto" type="checkbox" name="increase" %s> Solo aumentar episodios</label><br><label><input style="width:auto" type="checkbox" name="auto" %s> Sincronización automática</label></form><div class="actions-row"><button form="settingsForm">Guardar ajustes</button><button form="settingsForm" formaction="/sync">Sincronizar ahora</button><button class="secondary" type="button" onclick="openCache()">Ver caché</button><form method="post" action="/cache/clear" onsubmit="return confirm('¿Eliminar toda la caché?')"><button id="clearCacheButton" class="secondary">Eliminar caché</button></form></div><form method="post" action="/sync/stop" style="display:inline"><button id="stopButton" class="danger" style="display:none">Detener sincronización</button></form><p class="muted">Caché persistente: <b id="cacheCount">%d</b> coincidencias.</p><div id="progressWrap" class="progress-wrap"><div class="progress-track"><div id="progressBar" class="progress-bar"></div></div><div id="progressLabel" class="progress-label"></div></div></div>'''
+          if old_sync not in text:
+              raise SystemExit('Could not locate synchronization card')
+          text = text.replace(old_sync, new_sync, 1)
+
+          old_state = '''<div class="card"><h2>Estado</h2><div class="grid"><div class="stat"><b>Ejecutándose</b><br><span id="runningText">%s</span></div><div class="stat"><b>Último estado</b><br><span id="lastStatus">%s</span></div><div class="stat clickable" onclick="openResults('all')"><b>Encontrados</b><br><span id="found">%d</span></div><div class="stat clickable" onclick="openResults('updated')"><b>Actualizados</b><br><span id="updated">%d</span></div><div class="stat clickable" onclick="openResults('error')"><b>Errores</b><br><span id="errors">%d</span></div></div><p id="lastMessage" class="msg">%s</p><p><a class="btn secondary" target="_blank" rel="noopener" href="/health">JSON</a> <a class="btn secondary" target="_blank" rel="noopener" href="/history">Logs</a></p></div>'''
+          new_state = '''<div class="card"><h2>Estado</h2><div class="grid"><div class="stat"><b>Ejecutándose</b><br><span id="runningText">%s</span></div><div class="stat"><b>Último estado</b><br><span id="lastStatus">%s</span></div><div class="stat"><b>Última sincronización</b><br><span id="lastSync">%s</span></div><div class="stat clickable" onclick="openResults('all')"><b>Encontrados</b><br><span id="found">%d</span></div><div class="stat clickable" onclick="openResults('updated')"><b>Actualizados</b><br><span id="updated">%d</span></div><div class="stat clickable" onclick="openResults('error')"><b>Errores</b><br><span id="errors">%d</span></div></div><p id="lastMessage" class="msg">%s</p><p><a class="btn secondary" target="_blank" rel="noopener" href="/history">Logs</a></p></div>'''
+          if old_state not in text:
+              raise SystemExit('Could not locate status card')
+          text = text.replace(old_state, new_state, 1)
+
+          old_poll = "lastStatus.textContent=x.last_status||'Nunca';found.textContent=x.last?.found??0;"
+          new_poll = "lastStatus.textContent=x.last_status||'Nunca';lastSync.textContent=x.last_finished?new Date(x.last_finished*1000).toLocaleString():'Nunca';found.textContent=x.last?.found??0;"
+          if old_poll not in text:
+              raise SystemExit('Could not locate pollStatus update')
+          text = text.replace(old_poll, new_poll, 1)
+
+          old_args = 'a.cacheCount(), runText, html.EscapeString(lastStatus), st.Last.Found, st.Last.Updated, st.Last.Errors, html.EscapeString(st.Last.Message), running, processed, total, progressMessage, progressTrigger)'
+          new_args = 'a.cacheCount(), runText, html.EscapeString(lastStatus), html.EscapeString(lastSyncText), st.Last.Found, st.Last.Updated, st.Last.Errors, html.EscapeString(st.Last.Message), running, processed, total, progressMessage, progressTrigger)'
+          if old_args not in text:
+              raise SystemExit('Could not locate fmt arguments')
+          text = text.replace(old_args, new_args, 1)
+
+          path.write_text(text)
+          Path('VERSION').write_text('1.7.4\n')
+          PY
+
+          gofmt -w main.go
+          go test ./...
+
+      - name: Commit changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add main.go VERSION
+          git commit -m "UI: last sync time and compact actions"
+          git push origin HEAD:ui-status-row-1-7-4
